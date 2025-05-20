@@ -1,0 +1,956 @@
+library(shiny)
+library(shinydashboard)
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(lubridate)
+library(jsonlite)
+library(DT)
+library(scales)
+library(tidyr)
+library(purrr)
+library(colorspace)
+
+# Functions to load the data
+load_json_data <- function(file_path) {
+  tryCatch({
+    jsonlite::fromJSON(file_path)
+  }, error = function(e) {
+    warning(paste("Error loading", file_path, ":", e$message))
+    NULL
+  })
+}
+
+# Data preparation function
+# TODO: filter the data at the end so the data table is cleaner
+load_sample_data <- function() {
+  # Load all the data from JSON files
+  users <- load_json_data("generated_data/users.json")
+  categories <- load_json_data("generated_data/categories.json")
+  subcategories <- load_json_data("generated_data/subcategories.json")
+  offers <- load_json_data("generated_data/offers.json")
+  variants <- load_json_data("generated_data/variants.json")
+  orders <- load_json_data("generated_data/orders.json") 
+  order_items <- load_json_data("generated_data/order_items.json")
+  discounts <- load_json_data("generated_data/discounts.json")
+  
+  # Convert date strings to dates
+  orders$created_at <- as.POSIXct(orders$created_at)
+  orders$month <- format(orders$created_at, "%Y-%m")
+  offers$created_at <- as.POSIXct(offers$created_at)
+  discounts$created_at <- as.POSIXct(discounts$created_at)
+  discounts$until <- as.POSIXct(discounts$until)
+  
+  # Prepare data for category analysis
+  subcategories_df <- as.data.frame(subcategories)
+  categories_df <- as.data.frame(categories)
+  
+  # Format order items for analysis
+  order_items_df <- as.data.frame(order_items)
+  
+  # Join order items with orders for time-based analysis
+  order_items_with_dates <- order_items_df %>%
+    left_join(orders, by = "order_id")
+  
+  # Add subcategory information to offers
+  offers_df <- as.data.frame(offers)
+  offers_with_categories <- offers_df %>%
+    rowwise() %>%
+    mutate(
+      subcategory_names = list(subcategories_df$name[subcategories_df$subcategory_id %in% subcategories]),
+      category_ids = list(subcategories_df$category_id[subcategories_df$subcategory_id %in% subcategories])
+    )
+  
+  # Add category names
+  offers_with_categories <- offers_with_categories %>%
+    rowwise() %>%
+    mutate(
+      category_names = list(categories_df$name[categories_df$category_id %in% unlist(category_ids)])
+    )
+  
+  # Connect order items with offers and categories
+  order_items_with_categories <- order_items_with_dates %>%
+    left_join(offers_with_categories %>% select(-price), by = "offer_id")
+
+  
+  # Sum up number of items and total value per order
+  orders_df <- order_items_with_dates %>%
+    group_by(order_id) %>%
+    summarise(
+      quantity = sum(quantity, na.rm = TRUE)
+    ) %>%
+    ungroup() %>%
+    select(order_id, quantity) %>%
+    left_join(
+      select(orders, order_id, created_at, status, shipping_method, total, user_id),
+      by = "order_id") %>%
+    mutate(
+      user_type = ifelse(is.na(user_id), "Anonymous", "User")
+    ) %>%
+    select(-order_id, -user_id) %>%
+    mutate(
+      created_at = format(as.POSIXct(created_at), "%Y-%m-%d")
+    )
+  
+  # Calculate convertion rates and total value for categories
+  categories_summary <- order_items_with_categories %>%
+    group_by(category_names, offer_id) %>%
+    summarise(
+      quantity = sum(quantity, na.rm = TRUE),
+      total = sum(quantity * price, na.rm = TRUE),
+      convertion_rate = mean(convertion_rate, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    unnest(c(category_names, offer_id)) %>%
+    filter(!is.na(category_names))
+  
+  # Calculate convertion rates and total value for subcategories
+  subcategories_summary <- order_items_with_categories %>%
+    group_by(subcategory_names, offer_id) %>%
+    summarise(
+      quantity = sum(quantity, na.rm = TRUE),
+      total = sum(quantity * price, na.rm = TRUE),
+      convertion_rate = mean(convertion_rate, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    unnest(c(subcategory_names, offer_id)) %>%
+    # find a category name for each subcategory
+    left_join(subcategories_df, by = c("subcategory_names" = "name")) %>%
+    left_join(categories_df, by = c("category_id" = "category_id")) %>%
+    select(-subcategory_id, -category_id) %>%
+    rename(category_names = name) %>%
+    select(category_names, subcategory_names, offer_id, quantity, total, convertion_rate)
+      
+  
+  # Calculate convertion rates and total value for offers
+  offers_summary <- order_items_with_categories %>%
+    group_by(offer_id) %>%
+    summarise(
+      quantity = sum(quantity, na.rm = TRUE),
+      total = sum(quantity * price, na.rm = TRUE)
+    ) %>%
+    left_join(select(
+      offers_df,
+      c("offer_id", "convertion_rate", "recommended")
+    ), by = "offer_id")
+  
+  # Calculate statistics for variants
+  variants_df <- as.data.frame(variants)
+  variants_with_data <- order_items_with_categories %>%
+    group_by(offer_id, variant_id) %>%
+    summarise(
+      quantity = sum(quantity, na.rm = TRUE),
+      total = sum(quantity * price, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    left_join(
+      select(offers_df, c("offer_id", "recommended")),
+      by = "offer_id"
+    )
+  
+  
+  all_categories = categories_df$name
+  category_colors <- scales::hue_pal()(length(all_categories))
+  names(category_colors) <- all_categories
+  
+  # Return all the prepared datasets
+  return(list(
+    users = users,
+    categories = categories_summary,
+    subcategories = subcategories_summary,
+    offers = offers_summary,
+    variants = variants_with_data,
+    orders = orders_df,
+    order_items = order_items_with_categories,
+    category_colors = category_colors
+  ))
+}
+
+# Define UI
+ui <- dashboardPage(
+  dashboardHeader(title = "E-commerce Dashboard"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Dashboard", tabName = "dashboard", icon = icon("dashboard"))
+    )
+  ),
+  dashboardBody(
+    tags$head(
+      tags$style(HTML("
+        .small-valuebox .small-box {
+          padding-x: 10px;
+          display: flex;
+          align-items: center;
+        }
+        .small-valuebox .small-box h3 {
+          font-size: 20px; /* reduce value font size */
+          margin: 0;
+        }
+        .small-valuebox .small-box p {
+          font-size: 16px; /* reduce subtitle font size */
+          margin: 0;
+        }
+        .small-valuebox .icon-large {
+          font-size: 40px;            /* Smaller icon */
+          line-height: 40px;          /* Match box height for vertical centering */
+          height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          position: absolute;
+          top: 16px;
+          right: 16px;
+        }
+      "))
+    ),
+    
+    fluidRow(
+      box(
+        width = 12,
+        title = "Filter Controls",
+        status = "primary",
+        solidHeader = TRUE,
+        column(
+          width = 2,
+          selectInput(
+            "dataType",
+            "Select Data Type:",
+            choices = c("orders", "order_items", "categories", "subcategories", "offers", "variants")
+          )
+        ),
+        column(
+          width = 2,
+          uiOutput("valueTypeUI")  # Dynamic UI for value type based on data type
+        ),
+        column(
+          width = 2,
+          conditionalPanel(
+            condition = "input.dataType != 'categories' && input.dataType != 'subcategories'",
+            numericInput(
+              "bins",
+              "Number of Histogram Bins:",
+              value = 10,
+              min = 1,
+              max = 50
+            )
+          )
+        ),
+        column(
+          width = 1,
+          actionButton("resetFilters", "Remove Filters", class = "btn-danger"),
+          style = "margin-top: 25px;"
+        ),
+        column(
+          width = 4,
+          div(
+            class = "small-valuebox",
+            valueBox(
+              value = htmlOutput("totalValueThisMonth"),
+              subtitle = "Total value this month",
+              icon = icon("coins"),
+              color = "green",
+              width = 8
+            )
+          )
+        )
+      )
+    ),
+    fluidRow(
+      box(
+        width = 6,
+        title = "Data Visualization",
+        status = "primary",
+        solidHeader = TRUE,
+        conditionalPanel(
+          condition = "input.dataType == 'orders' || input.dataType == 'order_items' || input.dataType == 'offers' || input.dataType == 'variants'",
+          plotOutput("histogram", click = "plot_click", height = "400px")
+        ),
+        conditionalPanel(
+          condition = "input.dataType == 'categories' || input.dataType == 'subcategories'",
+          plotOutput("barplot", click = "plot_click", height = "400px")
+        )
+      ),
+      conditionalPanel(
+        condition = "input.dataType == 'orders' || input.dataType == 'order_items' || input.dataType == 'offers' || input.dataType == 'variants'",
+        # Additional plots, 2 per row
+        box(
+          width = 3,
+          status = "primary",
+          plotlyOutput("additionalPlot1", height = "200px")
+        ),
+        box(
+          width = 3,
+          status = "primary",
+          plotlyOutput("additionalPlot2", height = "200px")
+        ),
+        box(
+          width = 3,
+          status = "primary",
+          plotlyOutput("additionalPlot3", height = "200px")
+        ),
+        box(
+          width = 3,
+          status = "primary",
+          plotlyOutput("additionalPlot4", height = "200px")
+        )
+      )
+    ),
+    fluidRow(
+      box(
+        width = 12,
+        title = "Data Table",
+        status = "primary",
+        solidHeader = TRUE,
+        DTOutput("dataTable")
+      )
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output, session) {
+  # Load data
+  data <- reactiveVal(load_sample_data())
+  
+  # Total value this month
+  output$totalValueThisMonth <- renderText({
+    dataset <- data()$orders
+    
+    # Filter for the current month
+    current_month <- format(Sys.Date(), "%Y-%m")
+    filtered_data <- dataset %>%
+      mutate(month = format(as.Date(created_at), "%Y-%m")) %>%
+      filter(month == current_month)
+    
+    # Calculate total value
+    total_value <- sum(filtered_data$total, na.rm = TRUE)
+    
+    # Format as currency
+    formatted_value <- format(total_value, big.mark = ",", scientific = FALSE)
+    
+    paste0(formatted_value, " zł")
+  })
+  
+  # Track selected bin and filtered data
+  selected_bin <- reactiveVal(NULL)
+  selected_column <- reactiveVal(NULL)
+  filtered_data <- reactiveVal(NULL)
+  
+  # Dynamic UI for value type based on data type
+  output$valueTypeUI <- renderUI({
+    data_type <- input$dataType
+    
+    if (data_type == "orders") {
+      choices <- c("quantity", "total")
+    } else if (data_type == "order_items") {
+      # TODO: rename price to price_by_records
+      choices <- c("quantity", "price", "price_by_quantity")
+    } else if (data_type %in% c("categories", "subcategories", "offers")) {
+      choices <- c("quantity", "total", "convertion_rate")
+    } else if (data_type == "variants") {
+      choices <- c("quantity", "total")
+    } else {
+      choices <- c("quantity")
+    }
+    
+    selectInput(
+      "valueType",
+      "Select Value Type:",
+      choices = choices,
+      selected = ifelse("quantity" %in% choices, "quantity", choices[1])
+    )
+  })
+  
+  # Get the dataset based on user selection
+  get_dataset <- reactive({
+    dataset_name <- input$dataType
+    dataset <- data()[[dataset_name]]
+    
+    # Handle the case where the dataset is empty or NULL
+    if (is.null(dataset) || nrow(dataset) == 0) {
+      return(data.frame())
+    }
+    
+    return(dataset)
+  })
+  
+  # Get the value column based on user selection
+  get_value_column <- reactive({
+    dataset <- get_dataset()
+    value_type <- input$valueType
+    
+    # Handle empty dataset
+    if (nrow(dataset) == 0) {
+      return(numeric(0))
+    }
+    
+    # Safely get the column value, returning NA if not found
+    if (value_type %in% names(dataset)) {
+      return(dataset[[value_type]])
+    } else {
+      if (value_type != "price_by_quantity") {
+        warning(paste("Column", value_type, "not found in dataset. Returning NA values."))
+      }
+      return(rep(NA, nrow(dataset)))
+    }
+  })
+  
+  # Render the histogram
+  output$histogram <- renderPlot({
+    dataset <- get_dataset()
+    value_type <- input$valueType
+    value_column <- get_value_column()
+    
+    # Skip if there's no data or all values are NA
+    if (nrow(dataset) == 0 || all(is.na(value_column)) && value_type != "price_by_quantity") {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    # Create histogram data
+    if (value_type == "price_by_quantity") {
+      # Create a histogram of price, where count is a sum of quantities
+      value_column <- dataset %>%
+        group_by(price) %>%
+        reframe(quantity = sum(quantity, na.rm = TRUE)) %>%
+        ungroup() %>%
+        # for every row create a rep(price, quantity) vector
+        mutate(value = map2(price, quantity, ~rep(.x, .y))) %>%
+        select(value) %>%
+        # aggregate them into a single row
+        reframe(value = unlist(value))
+      value_column <- value_column$value
+    }
+    
+    hist_data <- data.frame(value = value_column)
+    
+    # Use R's built-in histogram function to calculate exact bins as they appear in the plot
+    h <- hist(value_column, breaks = input$bins, plot = FALSE)
+    breaks <- h$breaks
+    
+    # Basic plot with the same breaks that were calculated
+    p <- ggplot(hist_data, aes(x = value)) +
+      geom_histogram(breaks = breaks, fill = "steelblue", color = "white")
+    
+    # If there's a selected bin, highlight it
+    if (!is.null(selected_bin())) {
+      selected <- selected_bin()
+      bin_start <- selected$start
+      bin_end <- selected$end
+      bin_index <- selected$index
+      
+      # Create subset for just the selected bin
+      if (bin_index == 1) {
+        # For the first bin, include the left endpoint
+        bin_data <- subset(hist_data, value >= bin_start & value <= bin_end)
+      } else {
+        # For other bins, use half-open interval
+        bin_data <- subset(hist_data, value > bin_start & value <= bin_end)
+      }
+      
+      # Add the highlighted bin on top
+      p <- p + 
+        geom_histogram(data = bin_data, breaks = breaks, fill = "darkred", color = "white")
+    }
+    
+    # Add labels and theme
+    p <- p +
+      labs(title = paste("Distribution of", input$valueType),
+           x = input$valueType,
+           y = "Count") +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.minor.y = element_blank()
+      )
+    
+    return(p)
+  })
+  
+  # Render the bar plot for categorical data
+  output$barplot <- renderPlot({
+    dataset <- get_dataset()
+    value_type <- input$valueType
+    
+    # Skip if there's no data
+    if (nrow(dataset) == 0) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    # For categorical data like categories, subcategories, offers, and variants
+    # Get the appropriate name column based on data type
+    data_type <- input$dataType
+    if (data_type == "categories") {
+      name_col <- "category_names"
+    } else if (data_type == "subcategories") {
+      name_col <- "subcategory_names"
+    } else {
+      name_col <- "name"
+    }
+    
+    # Ensure the name column exists
+    if (!name_col %in% names(dataset)) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "Name column not found") + 
+               theme_void())
+    }
+    
+    # Ensure the value column exists
+    if (!value_type %in% names(dataset)) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = paste(value_type, "column not found")) + 
+               theme_void())
+    }
+    
+    # Prepare the data for plotting
+    plot_data <- dataset
+    
+    # Make sure to group and summarize if needed
+    plot_data_ordered <- plot_data %>%
+      group_by(.data[[name_col]]) %>%
+      summarize(value = sum(.data[[value_type]]), .groups = "drop") %>%
+      arrange(desc(value))
+    
+    # Create a factor with unique levels, ordered by value
+    plot_data[[name_col]] <- factor(plot_data[[name_col]],
+                                    levels = rev(plot_data_ordered[[name_col]]))
+    
+    # Create the plot, order by value
+    p <- ggplot(plot_data, aes(x = .data[[name_col]],
+                               y = .data[[value_type]],
+                               fill = .data$category_names
+                               )) +
+      # apply the color palette
+      scale_fill_manual(values = data()$category_colors) +
+      geom_bar(stat = "identity") +
+      labs(title = paste(value_type, "by", gsub("_names", "", name_col)),
+           x = gsub("_names", "", name_col),
+           y = value_type) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 18, face = "bold"),
+        axis.title = element_text(size = 16),
+        axis.text.y = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none"
+      ) +
+      coord_flip()
+    
+    if (!is.null(selected_column())) {
+      # Highlight the selected column
+      selected_label <- selected_column()
+      # We don't have access to .data
+      # so we need to use the name_col directly
+      selected_data <- plot_data[plot_data[[name_col]] == selected_label, ]
+      # Get the color for the selected label and change the brightness
+      if (name_col == "category_names") {
+        selected_fill <- data()$category_colors[selected_label]
+      } else {
+        # Selected label is a subcategory, not categroy
+        selected_fill <- data()$category_colors[selected_data$category_names[1]]
+      }
+      selected_fill <- darken(selected_fill, amount = 0.4)
+      p <- p + 
+        geom_bar(data = selected_data, aes(x = .data[[name_col]], y = .data[[value_type]]),
+                 stat = "identity", fill = selected_fill)
+    }
+    
+    return(p)
+  })
+  
+  # First additional plot
+  output$additionalPlot1 <- renderPlotly({
+    dataset <- if (!is.null(filtered_data())) {
+      filtered_data()
+    } else {
+      get_dataset()
+    }
+    
+    # Skip if there's no data
+    if (nrow(dataset) == 0) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    all_rows_count = nrow(dataset)
+    
+    # Status pie chart
+    # If we are working with orders
+    if (input$dataType == "orders") {
+      p_data <- dataset %>%
+        group_by(status) %>%
+        summarise(percent = n()/all_rows_count) %>%
+        ungroup() %>%
+        rename(label = status)
+    } else if (input$dataType == "order_items") {
+      # If we are working with order items
+      p_data <- dataset %>%
+        mutate(
+          personalization = ifelse(personalization_mask, ifelse(design_file_id, "Drawing + File", "Drawing"), ifelse(design_file_id, "File", "None"))
+        ) %>%
+        group_by(personalization) %>%
+        summarise(percent = n()/all_rows_count) %>%
+        ungroup() %>%
+        rename(label = personalization)
+    } else if (input$dataType == "offers" || input$dataType == "variants") {
+      p_data <- dataset %>%
+        group_by(recommended) %>%
+        summarise(percent = n()/all_rows_count) %>%
+        ungroup() %>%
+        rename(label = recommended)
+    } else {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    p <- plot_ly(
+      data = p_data,
+      labels = ~label,
+      values = ~percent,
+      type = "pie",
+      hoverinfo = "label+percent",
+      textposition = "none",
+      height = 200,
+      width = 250
+    ) %>% layout(
+      title = list(
+        text = ifelse(
+          input$dataType == "orders",
+          "Order status distribution", 
+          ifelse(input$dataType == "order_items",
+                 "Order items personalization distribution", 
+                 "Recommendation distribution"
+                 )
+        ),
+        font = list(size = 14)
+      ),
+      margin = list(l = 20, r = 20, b = 50, t = 50)
+    )
+    
+    return(p)
+  })
+  
+  # Second additional plot
+  output$additionalPlot2 <- renderPlotly({
+    dataset <- if (!is.null(filtered_data())) {
+      filtered_data()
+    } else {
+      get_dataset()
+    }
+    
+    # Skip if there's no data
+    if (nrow(dataset) == 0) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    all_rows_count = nrow(dataset)
+    
+    # Shipping method pie chart
+    if (input$dataType == "orders") {
+      p_data <- dataset %>%
+        group_by(shipping_method) %>%
+        summarise(percent = n()/all_rows_count) %>%
+        ungroup() %>%
+        rename(label = shipping_method)
+    } else if (input$dataType == "order_items") {
+      # If we are working with order items
+      p_data <- dataset %>%
+        group_by(was_discounted) %>%
+        summarise(percent = n()/all_rows_count) %>%
+        ungroup() %>%
+        rename(label = was_discounted) %>%
+        mutate(label = ifelse(label, "Discounted", "Not discounted"))
+    } else {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    p <- plot_ly(
+      data = p_data,
+      labels = ~label,
+      values = ~percent,
+      type = "pie",
+      hoverinfo = "label+percent",
+      textposition = "none",
+      height = 200,
+      width = 250
+    ) %>% layout(
+      title = list(
+        text = ifelse(input$dataType == "orders", "Order shipping method distribution", "Dicounts distribution"),
+        font = list(size = 14)
+      ),
+      margin = list(l = 10, r = 10, b = 50, t = 50)
+    )
+    
+    return(p)
+  })
+  
+  output$additionalPlot3 <- renderPlotly({
+    dataset <- if (!is.null(filtered_data())) {
+      filtered_data()
+    } else {
+      get_dataset()
+    }
+    
+    # Skip if there's no data
+    if (nrow(dataset) == 0) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    all_rows_count = nrow(dataset)
+    
+    # User or anonymous pie chart
+    if (input$dataType == "orders") {
+      p_data <- dataset %>%
+        group_by(user_type) %>%
+        summarise(percent = n()/all_rows_count) %>%
+        ungroup() %>%
+        rename(label = user_type)
+    } else {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    p <- plot_ly(
+      data = p_data,
+      labels = ~label,
+      values = ~percent,
+      type = "pie",
+      hoverinfo = "label+percent",
+      textposition = "none",
+      height = 200,
+      width = 250
+    ) %>% layout(
+      title = list(
+        text = "User type distribution",
+        font = list(size = 14)
+      ),
+      margin = list(l = 10, r = 10, b = 50, t = 50)
+    )
+    
+    return(p)
+  })
+  
+  output$additionalPlot4 <- renderPlotly({
+    dataset <- if (!is.null(filtered_data())) {
+      filtered_data()
+    } else {
+      get_dataset()
+    }
+    
+    # Skip if there's no data
+    if (nrow(dataset) == 0) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    # Orders by date pie chart
+    if (input$dataType == "orders") {
+      p_data <- dataset %>%
+        # This year only
+        filter(created_at >= as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01"))) %>%
+        mutate(month = format(as.Date(created_at), "%Y-%m")) %>%
+        group_by(month) %>%
+        summarise(value = n()) %>%
+        ungroup() %>%
+        rename(label = month) %>%
+        mutate(label = format(as.Date(paste0(label, "-01")), "%b")) %>%
+        # Reorder by months
+        mutate(label = factor(label, levels = month.abb)) 
+    } else {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    # Bar chart
+    p <- plot_ly(
+      data = p_data,
+      x = ~label,
+      y = ~value,
+      type = "bar",
+      hoverinfo = "text",
+      text = ~value,
+      textposition = "none",
+      height = 200,
+      width = 250
+    ) %>% layout(
+      title = list(
+        text = "Number of orders this year by month",
+        font = list(size = 14)
+      ),
+      margin = list(l = 10, r = 10, b = 50, t = 50),
+      # Remove axis titles
+      xaxis = list(title = ""),
+      yaxis = list(title = "")
+    )
+    
+    return(p)
+  })
+  
+  # Handle plot click
+  observeEvent(input$plot_click, {
+    dataset <- get_dataset()
+    data_type <- input$dataType
+    
+    # Different handling for histogram vs bar plot
+    if (data_type %in% c("orders", "order_items", "offers", "variants")) {
+      # Histogram click handling
+      value_column <- get_value_column()
+      
+      # Get the clicked x-value
+      clicked_value <- input$plot_click$x
+      
+      # Handle case with no data
+      if (length(value_column) == 0 || all(is.na(value_column))) {
+        return()
+      }
+      
+      # Use R's built-in histogram function to calculate exact bins as they appear in the plot
+      h <- hist(value_column, breaks = input$bins, plot = FALSE)
+      breaks <- h$breaks
+      
+      # Find which bin was clicked
+      for (i in 1:(length(breaks) - 1)) {
+        if (clicked_value >= breaks[i] && clicked_value < breaks[i + 1]) {
+          bin_start <- breaks[i]
+          bin_end <- breaks[i + 1]
+          
+          # Store both bin boundaries to ensure exact matching later
+          selected_bin(list(
+            start = bin_start,
+            end = bin_end,
+            index = i
+          ))
+          
+          # Apply filter to the dataset - match the exact bin boundaries
+          value_type <- input$valueType
+          if (i == 1) {
+            # Include the endpoint for the first bin
+            filtered <- dataset[dataset[[value_type]] >= bin_start & dataset[[value_type]] <= bin_end, ]
+          } else {
+            # Standard half-open interval for other bins
+            filtered <- dataset[dataset[[value_type]] > bin_start & dataset[[value_type]] <= bin_end, ]
+          }
+          
+          filtered_data(filtered)
+          break
+        }
+      }
+      
+      # We are working with a histogram, so reset the selected column
+      selected_column(NULL)
+    } else {
+      # Bar plot click handling
+      clicked_y <- input$plot_click$y
+      clicked_x <- input$plot_click$x
+      
+      # Get the appropriate name column based on data type
+      if (data_type == "categories") {
+        name_col <- "category_names"
+      } else if (data_type == "subcategories") {
+        name_col <- "subcategory_names"
+      } else {
+        name_col <- "name"
+      }
+      
+      # Get the data for the plot
+      value_type <- input$valueType
+      
+      # Prepare the data for plotting
+      plot_data <- dataset
+      
+      # Make sure to group and summarize if needed
+      plot_data_ordered <- plot_data %>%
+        group_by(.data[[name_col]]) %>%
+        summarize(value = sum(.data[[value_type]]), .groups = "drop") %>%
+        arrange(desc(value))
+      
+      # Create a factor with unique levels, ordered by value
+      plot_data[[name_col]] <- factor(plot_data[[name_col]],
+                                      levels = rev(plot_data_ordered[[name_col]]))
+      bar_levels <- levels(plot_data[[name_col]])
+      
+      # Find which bar was clicked (approximate match)
+      if (nrow(plot_data) > 0) {
+        # Get label from x-axis position
+        y_pos <- round(clicked_y)
+        
+        if (y_pos >= 1 && y_pos <= nrow(plot_data)) {
+          clicked_label <- bar_levels[y_pos]
+          
+          selected_column(clicked_label)
+          
+          # Filter the dataset based on the clicked bar
+          filtered <- dataset[dataset[[name_col]] == clicked_label, ]
+          filtered_data(filtered)
+          
+          # Reset the bin selection since we're working with a bar chart
+          selected_bin(NULL)
+        }
+      }
+    }
+  })
+  
+  # Reset filters when button is clicked
+  observeEvent(input$resetFilters, {
+    selected_bin(NULL)
+    selected_column(NULL)
+    filtered_data(NULL)
+  })
+  
+  # Reset filters when data type, value type or bins are changed
+  observeEvent(c(input$dataType, input$valueType, input$bins), {
+    selected_bin(NULL)
+    selected_column(NULL)
+    filtered_data(NULL)
+  })
+  
+  # Render the data table
+  output$dataTable <- renderDT({
+    # If filtered data exists, show it, otherwise show the full dataset
+    display_data <- if (!is.null(filtered_data())) {
+      filtered_data()
+    } else {
+      get_dataset()
+    }
+    
+    # Handle list columns for display - convert them to strings
+    display_data <- as.data.frame(display_data)
+    for (col in names(display_data)) {
+      if (is.list(display_data[[col]])) {
+        display_data[[col]] <- sapply(display_data[[col]], function(x) {
+          if (length(x) > 0) {
+            paste(x, collapse = ", ")
+          } else {
+            NA
+          }
+        })
+      }
+    }
+    
+    datatable(display_data, options = list(pageLength = 10))
+  })
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
