@@ -131,7 +131,7 @@ load_sample_data <- function() {
     ) %>%
     left_join(select(
       offers_df,
-      c("offer_id", "convertion_rate", "recommended")
+      c("offer_id", "convertion_rate", "recommended", "name")
     ), by = "offer_id")
   
   # Calculate statistics for variants
@@ -146,8 +146,11 @@ load_sample_data <- function() {
     left_join(
       select(offers_df, c("offer_id", "recommended")),
       by = "offer_id"
+    ) %>%
+    left_join(
+      select(variants_df, c("variant_id", "name")),
+      by = "variant_id"
     )
-  
   
   all_categories = categories_df$name
   category_colors <- scales::hue_pal()(length(all_categories))
@@ -168,15 +171,21 @@ load_sample_data <- function() {
 
 # Define UI
 ui <- dashboardPage(
-  dashboardHeader(title = "E-commerce Dashboard"),
-  dashboardSidebar(
-    sidebarMenu(
-      menuItem("Dashboard", tabName = "dashboard", icon = icon("dashboard"))
+  dashboardHeader(
+    title = tags$div(
+    tags$img(src = "https://albox.pl/logo.webp", height = "30px"),
+    "Albox Dashboard"
     )
   ),
+  dashboardSidebar(disable = TRUE),
   dashboardBody(
     tags$head(
       tags$style(HTML("
+        .main-header .logo {
+          background-color: #ffffff !important;
+          color: #000000 !important;
+          border: 2px solid #000000 !important;
+        }
         .small-valuebox .small-box {
           padding-x: 10px;
           display: flex;
@@ -426,6 +435,7 @@ server <- function(input, output, session) {
     hist_data <- data.frame(value = value_column)
     
     # Use R's built-in histogram function to calculate exact bins as they appear in the plot
+    # TODO: calculate histogrma manually
     h <- hist(value_column, breaks = input$bins, plot = FALSE)
     breaks <- h$breaks
     
@@ -832,6 +842,17 @@ server <- function(input, output, session) {
       # Find which bin was clicked
       for (i in 1:(length(breaks) - 1)) {
         if (clicked_value >= breaks[i] && clicked_value < breaks[i + 1]) {
+          prev_selected_bin = selected_bin()
+          if (!is.null(prev_selected_bin)) {
+            # Check if the clicked bin is the same as the previously selected bin
+            if (prev_selected_bin$start == breaks[i] && prev_selected_bin$end == breaks[i + 1]) {
+              # If it's the same, clear the selection
+              selected_bin(NULL)
+              filtered_data(NULL)
+              return()
+            }
+          }
+          
           bin_start <- breaks[i]
           bin_end <- breaks[i + 1]
           
@@ -898,6 +919,17 @@ server <- function(input, output, session) {
         if (y_pos >= 1 && y_pos <= nrow(plot_data)) {
           clicked_label <- bar_levels[y_pos]
           
+          prev_selected_column = selected_column()
+          if (!is.null(prev_selected_column)) {
+            # Check if the clicked label is the same as the previously selected label
+            if (prev_selected_column == clicked_label) {
+              # If it's the same, clear the selection
+              selected_column(NULL)
+              filtered_data(NULL)
+              return()
+            }
+          }
+          
           selected_column(clicked_label)
           
           # Filter the dataset based on the clicked bar
@@ -913,9 +945,6 @@ server <- function(input, output, session) {
   
   # Reset filters when button is clicked
   observeEvent(input$resetFilters, {
-    selected_bin(NULL)
-    selected_column(NULL)
-    filtered_data(NULL)
   })
   
   # Reset filters when data type, value type or bins are changed
@@ -948,7 +977,32 @@ server <- function(input, output, session) {
       }
     }
     
-    datatable(display_data, options = list(pageLength = 10))
+    if (input$dataType == "categories" || input$dataType == "subcategories") {
+      # Get offer name using offer id
+      display_data <- display_data %>%
+        left_join(data()$offers %>% select(offer_id, name), by = "offer_id") %>%
+        select(-offer_id) %>%
+        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
+    } else if (input$dataType == "offers") {
+      display_data <- display_data %>%
+        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
+    } else if (input$dataType == "order_items") {
+      # Get variant name using variant id
+      print(display_data)
+      display_data <- display_data %>%
+        select(-order_id, -offer_id, -created_at.x, -created_at.y, -user_id,
+               -billing_and_delivery_details_equal, -name, -month, -subcategories,
+               -subcategory_names, -category_ids, -category_names) %>%
+        left_join(data()$variants %>% select(variant_id, name), by = "variant_id") %>%
+        select(-variant_id) %>%
+        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>")) %>%
+        rename(Variant = name)
+    } else if (input$dataType == "variants") {
+      display_data <- display_data %>%
+        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
+    }
+    
+    datatable(display_data, options = list(pageLength = 10), escape = FALSE);
   })
 }
 

@@ -124,6 +124,7 @@ def generate_offers(num_offers: int, subcategories: List[Dict[str, Any]]) -> Lis
         convertion_rate = max(0.01, min(convertion_rate, 1))  # Ensure convertion rate is between 0 and 1
         offer = {
             "offer_id": i,
+            "name": fake.word() + " " + fake.word(),
             "created_at": fake.date_time_this_year(),
             "price": generate_price(),
             "subcategories": random.sample([sub["subcategory_id"] for sub in subcategories], k=generate_number_of_subcategories()),
@@ -137,8 +138,10 @@ def generate_variants(num_variants: int, offers: List[Dict[str, Any]]) -> List[D
     variants = []
     # For every offer generate at least one variant
     for i, offer in enumerate(offers):
+        suffix = fake.word()
         variant = {
             "variant_id": i,
+            "name": offer["name"] + " " + suffix,
             "offer_id": offer["offer_id"],
             "image_count": random.randint(1, NUM_IMAGES)
         }
@@ -146,9 +149,12 @@ def generate_variants(num_variants: int, offers: List[Dict[str, Any]]) -> List[D
         
     # Generate additional variants
     for i in range(num_variants - len(offers)):
+        suffix = fake.word()
+        offer = random.choice(offers)
         variant = {
             "variant_id": i + len(offers),
-            "offer_id": random.choice(offers)["offer_id"],
+            "name": offer["name"] + " " + suffix,
+            "offer_id": offer["offer_id"],
             "image_count": random.randint(1, NUM_IMAGES)
         }
         variants.append(variant)
@@ -177,7 +183,7 @@ def generate_order_items(order_id: int, variants: List[Dict[str, Any]]) -> List[
             
     return order_items
 
-def generate_orders(num_orders: int, users: List[Dict[str, Any]], variants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def generate_orders(num_orders: int, users: List[Dict[str, Any]], variants: List[Dict[str, Any]]):
     orders = []
     order_items_all = {}
     for i in range(num_orders):
@@ -239,7 +245,7 @@ def generate_discounts(num_discounts: int, offers: List[Dict[str, Any]]) -> List
     return discounts
 
 # Apply discounts to orders
-def apply_discounts_to_orders(orders: List[Dict[str, Any]], order_items_all: Dict[int, List[Dict[str, Any]]], discounts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def apply_discounts_to_orders(orders: List[Dict[str, Any]], order_items_all: Dict[int, List[Dict[str, Any]]], discounts: List[Dict[str, Any]]):
     for order in orders:
         # Get all discounts where order.created_at is between discount created_at and until
         applicable_discounts = [discount for discount in discounts if order["created_at"] > discount["created_at"] and order["created_at"] < discount["until"]]
