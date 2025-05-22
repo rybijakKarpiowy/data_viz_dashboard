@@ -92,18 +92,6 @@ load_sample_data <- function() {
       created_at = format(as.POSIXct(created_at), "%Y-%m-%d")
     )
   
-  # Calculate convertion rates and total value for categories
-  categories_summary <- order_items_with_categories %>%
-    group_by(category_names, offer_id) %>%
-    summarise(
-      quantity = sum(quantity, na.rm = TRUE),
-      total = sum(quantity * price, na.rm = TRUE),
-      convertion_rate = mean(convertion_rate, na.rm = TRUE),
-      .groups = "drop"
-    ) %>%
-    unnest(c(category_names, offer_id)) %>%
-    filter(!is.na(category_names))
-  
   # Calculate convertion rates and total value for subcategories
   subcategories_summary <- order_items_with_categories %>%
     group_by(subcategory_names, offer_id) %>%
@@ -159,7 +147,6 @@ load_sample_data <- function() {
   # Return all the prepared datasets
   return(list(
     users = users,
-    categories = categories_summary,
     subcategories = subcategories_summary,
     offers = offers_summary,
     variants = variants_with_data,
@@ -224,7 +211,7 @@ ui <- dashboardPage(
           selectInput(
             "dataType",
             "Select Data Type:",
-            choices = c("orders", "order_items", "categories", "subcategories", "offers", "variants")
+            choices = c("orders", "order_items", "categories", "offers", "variants")
           )
         ),
         column(
@@ -255,7 +242,7 @@ ui <- dashboardPage(
             class = "small-valuebox",
             valueBox(
               value = htmlOutput("totalValueThisMonth"),
-              subtitle = "Total value this month",
+              subtitle = "Total value of orders this month",
               icon = icon("coins"),
               color = "green",
               width = 8
@@ -275,8 +262,8 @@ ui <- dashboardPage(
           plotOutput("histogram", click = "plot_click", height = "400px")
         ),
         conditionalPanel(
-          condition = "input.dataType == 'categories' || input.dataType == 'subcategories'",
-          plotOutput("barplot", click = "plot_click", height = "400px")
+          condition = "input.dataType == 'categories'",
+          plotOutput("categoriesPlot", click = "categories_plot_click", height = "400px")
         )
       ),
       conditionalPanel(
@@ -284,23 +271,26 @@ ui <- dashboardPage(
         # Additional plots, 2 per row
         box(
           width = 3,
-          status = "primary",
           plotlyOutput("additionalPlot1", height = "200px")
         ),
         box(
           width = 3,
-          status = "primary",
           plotlyOutput("additionalPlot2", height = "200px")
         ),
         box(
           width = 3,
-          status = "primary",
           plotlyOutput("additionalPlot3", height = "200px")
         ),
         box(
           width = 3,
-          status = "primary",
           plotlyOutput("additionalPlot4", height = "200px")
+        )
+      ),
+      conditionalPanel(
+        condition = "input.dataType == 'categories'",
+        box(
+          width = 6,
+          plotOutput("subcategoriesPlot", click = "subcategories_plot_click", height = "400px")
         )
       )
     ),
@@ -373,6 +363,9 @@ server <- function(input, output, session) {
   # Get the dataset based on user selection
   get_dataset <- reactive({
     dataset_name <- input$dataType
+    if (dataset_name == "categories") {
+      dataset_name <- "subcategories"
+    }
     dataset <- data()[[dataset_name]]
     
     # Handle the case where the dataset is empty or NULL
@@ -382,6 +375,56 @@ server <- function(input, output, session) {
     
     return(dataset)
   })
+  
+  handle_bar_plot_click <- function(name_col, clicked_x, clicked_y) {
+    # Get the data for the plot
+    dataset <- get_dataset()
+    value_type <- input$valueType
+    
+    # Prepare the data for plotting
+    plot_data <- dataset
+    
+    # Make sure to group and summarize if needed
+    plot_data_ordered <- plot_data %>%
+      group_by(.data[[name_col]]) %>%
+      summarize(value = sum(.data[[value_type]]), .groups = "drop") %>%
+      arrange(desc(value))
+    
+    # Create a factor with unique levels, ordered by value
+    plot_data[[name_col]] <- factor(plot_data[[name_col]],
+                                    levels = rev(plot_data_ordered[[name_col]]))
+    bar_levels <- levels(plot_data[[name_col]])
+    
+    # Find which bar was clicked (approximate match)
+    if (nrow(plot_data) > 0) {
+      # Get label from x-axis position
+      y_pos <- round(clicked_y)
+      
+      if (y_pos >= 1 && y_pos <= nrow(plot_data)) {
+        clicked_label <- bar_levels[y_pos]
+        
+        prev_selected_column = selected_column()
+        if (!is.null(prev_selected_column)) {
+          # Check if the clicked label is the same as the previously selected label
+          if (prev_selected_column == clicked_label) {
+            # If it's the same, clear the selection
+            selected_column(NULL)
+            filtered_data(NULL)
+            return()
+          }
+        }
+        
+        selected_column(clicked_label)
+        
+        # Filter the dataset based on the clicked bar
+        filtered <- dataset[dataset[[name_col]] == clicked_label, ]
+        filtered_data(filtered)
+        
+        # Reset the bin selection since we're working with a bar chart
+        selected_bin(NULL)
+      }
+    }
+  }
   
   # Get the value column based on user selection
   get_value_column <- reactive({
@@ -483,8 +526,9 @@ server <- function(input, output, session) {
   })
   
   # Render the bar plot for categorical data
-  output$barplot <- renderPlot({
+  output$categoriesPlot <- renderPlot({
     dataset <- get_dataset()
+  
     value_type <- input$valueType
     
     # Skip if there's no data
@@ -496,14 +540,7 @@ server <- function(input, output, session) {
     
     # For categorical data like categories, subcategories, offers, and variants
     # Get the appropriate name column based on data type
-    data_type <- input$dataType
-    if (data_type == "categories") {
-      name_col <- "category_names"
-    } else if (data_type == "subcategories") {
-      name_col <- "subcategory_names"
-    } else {
-      name_col <- "name"
-    }
+    name_col <- "category_names"
     
     # Ensure the name column exists
     if (!name_col %in% names(dataset)) {
@@ -527,6 +564,18 @@ server <- function(input, output, session) {
       group_by(.data[[name_col]]) %>%
       summarize(value = sum(.data[[value_type]]), .groups = "drop") %>%
       arrange(desc(value))
+    
+    # Handle convertion_rate case - calculate mean
+    if (value_type == "convertion_rate") {
+      plot_data <- plot_data %>%
+        select("category_names", "convertion_rate") %>%
+        group_by(category_names) %>%
+        summarise(convertion_rate = mean(convertion_rate, na.rm = TRUE)) %>%
+        ungroup()
+      
+      plot_data_ordered <- plot_data %>%
+        arrange(desc(convertion_rate)) 
+    }
     
     # Create a factor with unique levels, ordered by value
     plot_data[[name_col]] <- factor(plot_data[[name_col]],
@@ -817,6 +866,110 @@ server <- function(input, output, session) {
     return(p)
   })
   
+  output$subcategoriesPlot = renderPlot({
+    dataset <- get_dataset()
+    
+    value_type <- input$valueType
+    
+    # Skip if there's no data
+    if (nrow(dataset) == 0) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
+               theme_void())
+    }
+    
+    name_col <- "subcategory_names"
+    
+    # Ensure the name column exists
+    if (!name_col %in% names(dataset)) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = "Name column not found") + 
+               theme_void())
+    }
+    
+    # Ensure the value column exists
+    if (!value_type %in% names(dataset)) {
+      return(ggplot() + 
+               annotate("text", x = 0.5, y = 0.5, label = paste(value_type, "column not found")) + 
+               theme_void())
+    }
+    
+    # Prepare the data for plotting
+    plot_data <- dataset
+    
+    # Make sure to group and summarize if needed
+    plot_data_ordered <- plot_data %>%
+      group_by(.data[[name_col]]) %>%
+      summarize(value = sum(.data[[value_type]]), .groups = "drop") %>%
+      arrange(desc(value))
+    
+    # Handle convertion_rate case - calculate mean
+    if (value_type == "convertion_rate") {
+      subcategories_to_categories <- plot_data %>%
+        select("subcategory_names", "category_names") %>%
+        unique()
+      
+      plot_data <- plot_data %>%
+        select("subcategory_names", "convertion_rate") %>%
+        group_by(subcategory_names) %>%
+        summarise(convertion_rate = mean(convertion_rate, na.rm = TRUE)) %>%
+        ungroup() %>%
+        left_join(subcategories_to_categories, by = "subcategory_names")
+      
+      plot_data_ordered <- plot_data %>%
+        arrange(desc(convertion_rate)) 
+    }
+    
+    # Create a factor with unique levels, ordered by value
+    plot_data[[name_col]] <- factor(plot_data[[name_col]],
+                                    levels = rev(plot_data_ordered[[name_col]]))
+    
+    # Create the plot, order by value
+    p <- ggplot(plot_data, aes(x = .data[[name_col]],
+                               y = .data[[value_type]],
+                               fill = .data$category_names
+    )) +
+      # apply the color palette
+      scale_fill_manual(values = data()$category_colors) +
+      geom_bar(stat = "identity") +
+      labs(title = paste(value_type, "by", gsub("_names", "", name_col)),
+           x = gsub("_names", "", name_col),
+           y = value_type) +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(size = 18, face = "bold"),
+        axis.title = element_text(size = 16),
+        axis.text.y = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        legend.position = "none"
+      ) +
+      coord_flip()
+    
+    if (!is.null(selected_column())) {
+      # Highlight the selected column
+      selected_label <- selected_column()
+      # We don't have access to .data
+      # so we need to use the name_col directly
+      selected_data <- plot_data[plot_data[[name_col]] == selected_label, ]
+      # Get the color for the selected label and change the brightness
+      if (name_col == "category_names") {
+        selected_fill <- data()$category_colors[selected_label]
+      } else {
+        # Selected label is a subcategory, not categroy
+        selected_fill <- data()$category_colors[selected_data$category_names[1]]
+      }
+      selected_fill <- darken(selected_fill, amount = 0.4)
+      p <- p + 
+        geom_bar(data = selected_data, aes(x = .data[[name_col]], y = .data[[value_type]]),
+                 stat = "identity", fill = selected_fill)
+    }
+    
+    return(p)
+  })
+  
   # Handle plot click
   observeEvent(input$plot_click, {
     dataset <- get_dataset()
@@ -880,67 +1033,20 @@ server <- function(input, output, session) {
       
       # We are working with a histogram, so reset the selected column
       selected_column(NULL)
-    } else {
-      # Bar plot click handling
-      clicked_y <- input$plot_click$y
-      clicked_x <- input$plot_click$x
-      
-      # Get the appropriate name column based on data type
-      if (data_type == "categories") {
-        name_col <- "category_names"
-      } else if (data_type == "subcategories") {
-        name_col <- "subcategory_names"
-      } else {
-        name_col <- "name"
-      }
-      
-      # Get the data for the plot
-      value_type <- input$valueType
-      
-      # Prepare the data for plotting
-      plot_data <- dataset
-      
-      # Make sure to group and summarize if needed
-      plot_data_ordered <- plot_data %>%
-        group_by(.data[[name_col]]) %>%
-        summarize(value = sum(.data[[value_type]]), .groups = "drop") %>%
-        arrange(desc(value))
-      
-      # Create a factor with unique levels, ordered by value
-      plot_data[[name_col]] <- factor(plot_data[[name_col]],
-                                      levels = rev(plot_data_ordered[[name_col]]))
-      bar_levels <- levels(plot_data[[name_col]])
-      
-      # Find which bar was clicked (approximate match)
-      if (nrow(plot_data) > 0) {
-        # Get label from x-axis position
-        y_pos <- round(clicked_y)
-        
-        if (y_pos >= 1 && y_pos <= nrow(plot_data)) {
-          clicked_label <- bar_levels[y_pos]
-          
-          prev_selected_column = selected_column()
-          if (!is.null(prev_selected_column)) {
-            # Check if the clicked label is the same as the previously selected label
-            if (prev_selected_column == clicked_label) {
-              # If it's the same, clear the selection
-              selected_column(NULL)
-              filtered_data(NULL)
-              return()
-            }
-          }
-          
-          selected_column(clicked_label)
-          
-          # Filter the dataset based on the clicked bar
-          filtered <- dataset[dataset[[name_col]] == clicked_label, ]
-          filtered_data(filtered)
-          
-          # Reset the bin selection since we're working with a bar chart
-          selected_bin(NULL)
-        }
-      }
     }
+  })
+  
+  # define a barplot click function
+  observeEvent(input$categories_plot_click, {
+    clicked_y <- input$categories_plot_click$y
+    clicked_x <- input$categories_plot_click$x
+    handle_bar_plot_click("category_names", clicked_x, clicked_y)
+  })
+  
+  observeEvent(input$subcategories_plot_click, {
+    clicked_y <- input$subcategories_plot_click$y
+    clicked_x <- input$subcategories_plot_click$x
+    handle_bar_plot_click("subcategory_names", clicked_x, clicked_y)
   })
   
   # Reset filters when button is clicked
@@ -988,7 +1094,6 @@ server <- function(input, output, session) {
         mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
     } else if (input$dataType == "order_items") {
       # Get variant name using variant id
-      print(display_data)
       display_data <- display_data %>%
         select(-order_id, -offer_id, -created_at.x, -created_at.y, -user_id,
                -billing_and_delivery_details_equal, -name, -month, -subcategories,
