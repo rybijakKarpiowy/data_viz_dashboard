@@ -54,7 +54,8 @@ load_sample_data <- function() {
   # Rename quantity to Quantity and price to Price
   order_items <- order_items %>%
     rename(Quantity = quantity) %>%
-    rename(Price = price)
+    rename(Price = price) %>%
+    mutate(was_discounted = ifelse(was_discounted, "Discount", "No discount"))
   
   # Prepare data for category analysis
   subcategories_df <- as.data.frame(subcategories)
@@ -340,7 +341,7 @@ server <- function(input, output, session) {
       filter(month == current_month)
     
     # Calculate total value
-    total_value <- sum(filtered_data$total, na.rm = TRUE)
+    total_value <- sum(filtered_data$"Total value", na.rm = TRUE)
     
     # Format as currency
     formatted_value <- format(total_value, big.mark = ",", scientific = FALSE)
@@ -360,8 +361,7 @@ server <- function(input, output, session) {
     if (data_type == "Orders") {
       choices <- c("Quantity", "Total value")
     } else if (data_type == "Order items") {
-      # TODO: rename price to price_by_records
-      choices <- c("Quantity", "Price by order item", "price_by_quantity")
+      choices <- c("Quantity", "Price by order item", "Price by quantity")
     } else if (data_type %in% c("Categories", "Offers")) {
       choices <- c("Quantity", "Total value", "convertion_rate")
     } else if (data_type == "Variants") {
@@ -460,7 +460,8 @@ server <- function(input, output, session) {
     } else if (value_type == "Price by order item") {
       return(dataset$Price)
     } else {
-      if (value_type != "price_by_quantity") {
+      # TODO: rename convertion_rate
+      if (value_type != "Price by quantity") {
         warning(paste0("Column '", value_type, "' not found in dataset. Returning NA values."))
       }
       return(rep(NA, nrow(dataset)))
@@ -474,14 +475,14 @@ server <- function(input, output, session) {
     value_column <- get_value_column()
     
     # Skip if there's no data or all values are NA
-    if (nrow(dataset) == 0 || all(is.na(value_column)) && value_type != "price_by_quantity") {
+    if (nrow(dataset) == 0 || all(is.na(value_column)) && value_type != "Price by quantity") {
       return(ggplot() + 
                annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
                theme_void())
     }
     
     # Create histogram data
-    if (value_type == "price_by_quantity") {
+    if (value_type == "Price by quantity") {
       # Create a histogram of price, where count is a sum of quantities
       value_column <- dataset %>%
         group_by(Price) %>%
@@ -747,8 +748,7 @@ server <- function(input, output, session) {
         group_by(was_discounted) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
-        rename(label = was_discounted) %>%
-        mutate(label = ifelse(label, "Discounted", "Not discounted"))
+        rename(label = was_discounted)
     } else {
       return(ggplot() + 
                annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
@@ -990,11 +990,28 @@ server <- function(input, output, session) {
   observeEvent(input$plot_click, {
     dataset <- get_dataset()
     data_type <- input$dataType
+    value_type <- input$valueType
     
     # Different handling for histogram vs bar plot
     if (data_type %in% c("Orders", "Order items", "Offers", "Variants")) {
       # Histogram click handling
-      value_column <- get_value_column()
+      
+      
+      if (value_type == "Price by quantity") {
+        # Create a histogram of price, where count is a sum of quantities
+        value_column <- dataset %>%
+          group_by(Price) %>%
+          reframe(Quantity = sum(Quantity, na.rm = TRUE)) %>%
+          ungroup() %>%
+          # for every row create a rep(price, quantity) vector
+          mutate(value = map2(Price, Quantity, ~rep(.x, .y))) %>%
+          select(value) %>%
+          # aggregate them into a single row
+          reframe(value = unlist(value))
+        value_column <- value_column$value
+      } else {
+        value_column <- get_value_column()
+      }
       
       # Get the clicked x-value
       clicked_value <- input$plot_click$x
@@ -1033,8 +1050,7 @@ server <- function(input, output, session) {
           ))
           
           # Apply filter to the dataset - match the exact bin boundaries
-          value_type <- input$valueType
-          if (value_type == "Price by order item") {
+          if (value_type == "Price by order item" || value_type == "Price by quantity") {
             value_type <- "Price"
           }
           if (i == 1) {
