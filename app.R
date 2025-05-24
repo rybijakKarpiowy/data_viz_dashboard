@@ -22,7 +22,6 @@ load_json_data <- function(file_path) {
 }
 
 # Data preparation function
-# TODO: filter the data at the end so the data table is cleaner
 load_sample_data <- function() {
   # Load all the data from JSON files
   users <- load_json_data("generated_data/users.json")
@@ -94,7 +93,7 @@ load_sample_data <- function() {
   
   # Connect order items with offers and categories
   order_items_with_categories <- order_items_with_dates %>%
-    left_join(offers_with_categories %>% select(-price), by = "offer_id")
+    left_join(offers_with_categories %>% select(-price, -created_at), by = "offer_id")
 
   
   # Sum up number of items and total value per order
@@ -111,9 +110,19 @@ load_sample_data <- function() {
     mutate(
       user_type = ifelse(is.na(user_id), "Anonymous", "User")
     ) %>%
-    select(-order_id, -user_id) %>%
+    select(-user_id) %>%
     mutate(
       created_at = format(as.POSIXct(created_at), "%Y-%m-%d")
+    ) %>%
+    select(
+      order_id, created_at, Quantity, "Total value", status, shipping_method, user_type
+    ) %>%
+    rename(
+      "Order ID" = order_id,
+      "Status" = status,
+      "Created at" = created_at,
+      "Shipping method" = shipping_method,
+      "User type" = user_type
     )
   
   # Calculate convertion rates and total value for subcategories
@@ -136,20 +145,33 @@ load_sample_data <- function() {
     left_join(categories_df, by = c("category_id" = "category_id")) %>%
     select(-subcategory_id, -category_id) %>%
     rename(category_names = name) %>%
-    select(category_names, subcategory_names, offer_id, Quantity, "Total value", "Convertion rate")
+    select(category_names, subcategory_names, offer_id, Quantity, "Total value", "Convertion rate") %>%
+    rename(
+      `Category` = category_names,
+      `Subcategory` = subcategory_names
+    ) %>%
+    mutate(
+      `Convertion rate` = round(`Convertion rate`, 4)
+    )
       
-  
   # Calculate convertion rates and total value for offers
   offers_summary <- order_items_with_categories %>%
     group_by(offer_id) %>%
     summarise(
       Quantity = sum(Quantity, na.rm = TRUE),
-      "Total value" = sum(Quantity * Price, na.rm = TRUE)
+      `Total value` = sum(Quantity * Price, na.rm = TRUE)
     ) %>%
     left_join(select(
       offers_df,
-      c("offer_id", "Convertion rate", "recommended", "name")
-    ), by = "offer_id")
+      c("offer_id", "Convertion rate", "recommended", "name", "price")
+    ), by = "offer_id") %>%
+    rename(
+      Recommended = recommended,
+      `Regular price` = price
+      ) %>%
+    mutate(
+      `Convertion rate` = round(`Convertion rate`, 4)
+    )
   
   # Calculate statistics for variants
   variants_df <- as.data.frame(variants)
@@ -157,11 +179,11 @@ load_sample_data <- function() {
     group_by(offer_id, variant_id) %>%
     summarise(
       Quantity = sum(Quantity, na.rm = TRUE),
-      "Total value" = sum(Quantity * Price, na.rm = TRUE),
+      `Total value` = sum(Quantity * Price, na.rm = TRUE),
       .groups = "drop"
     ) %>%
     left_join(
-      select(offers_df, c("offer_id", "recommended")),
+      select(offers_df, c("offer_id", "recommended", "price")),
       by = "offer_id"
     ) %>%
     left_join(
@@ -173,14 +195,42 @@ load_sample_data <- function() {
   category_colors <- scales::hue_pal()(length(all_categories))
   names(category_colors) <- all_categories
   
+  order_items_summary <- order_items_with_categories %>%
+    select(-offer_id, -user_id,
+           -billing_and_delivery_details_equal, -name, -subcategories,
+           -subcategory_names, -category_ids, -category_names,
+           -`Convertion rate`, -shipping_method, -`Total value`,
+           -status) %>%
+    mutate(created_at = format(as.POSIXct(created_at), "%Y-%m-%d")) %>%
+    left_join(variants_df %>% select(variant_id, name), by = "variant_id") %>%
+    select(-variant_id) %>%
+    rename(
+      Discount = was_discounted,
+      Personalization = personalization,
+      `Created at` = created_at,
+      Recommended = recommended,
+      `Order ID` = order_id,
+      Variant = name
+    ) %>%
+    select(
+      Variant, `Order ID`, `Created at`, Quantity, Price, Discount, Personalization, Recommended
+    )
+  
+  variants_summary <- variants_with_data %>%
+    rename(
+      `Regular price` = price,
+      Recommended = recommended
+    ) %>%
+    select(-offer_id, -variant_id)
+  
   # Return all the prepared datasets
   return(list(
     Orders = orders_df,
-    "Order items" = order_items_with_categories,
+    "Order items" = order_items_summary,
     Subcategories = subcategories_summary,
     category_colors = category_colors,
     Offers = offers_summary,
-    Variants = variants_with_data
+    Variants = variants_summary
   ))
 }
 
@@ -295,16 +345,21 @@ ui <- dashboardPage(
         )
       ),
       conditionalPanel(
-        condition = "input.dataType == 'Orders' || input.dataType == 'Order items' || input.dataType == 'Offers' || input.dataType == 'Variants'",
-        # Additional plots, 2 per row
+        condition = "input.dataType != 'Categories'",
         box(
           width = 3,
           plotlyOutput("additionalPlot1", height = "200px")
-        ),
+        )
+      ),
+      conditionalPanel(
+        condition = "input.dataType != 'Categories' && input.dataType != 'Offers' && input.dataType != 'Variants'",
         box(
           width = 3,
           plotlyOutput("additionalPlot2", height = "200px")
-        ),
+        )
+      ),
+      conditionalPanel(
+        condition = "input.dataType == 'Orders'",
         box(
           width = 3,
           plotlyOutput("additionalPlot3", height = "200px")
@@ -346,7 +401,7 @@ server <- function(input, output, session) {
     # Filter for the current month
     current_month <- format(Sys.Date(), "%Y-%m")
     filtered_data <- dataset %>%
-      mutate(month = format(as.Date(created_at), "%Y-%m")) %>%
+      mutate(month = format(as.Date(`Created at`), "%Y-%m")) %>%
       filter(month == current_month)
     
     # Calculate total value
@@ -370,7 +425,7 @@ server <- function(input, output, session) {
     if (data_type == "Orders") {
       choices <- c("Quantity", "Total value")
     } else if (data_type == "Order items") {
-      choices <- c("Quantity", "Price by order item", "Price by quantity")
+      choices <- c("Quantity", "Price by order item", "Price by bought product")
     } else if (data_type %in% c("Categories", "Offers")) {
       choices <- c("Quantity", "Total value", "Convertion rate")
     } else if (data_type == "Variants") {
@@ -419,11 +474,11 @@ server <- function(input, output, session) {
     
     # Handle convertion_rate case - calculate mean
     if (value_type == "Convertion rate") {
-      if (name_col == "category_names") {
+      if (name_col == "Category") {
         plot_data <- plot_data %>%
-          select(category_names, "Convertion rate", offer_id) %>%
+          select(Category, "Convertion rate", offer_id) %>%
           distinct() %>%
-          group_by(category_names) %>%
+          group_by(Category) %>%
           summarise(`Convertion rate` = mean(`Convertion rate`, na.rm = TRUE)) %>%
           ungroup()
         
@@ -431,15 +486,15 @@ server <- function(input, output, session) {
           arrange(desc(`Convertion rate`)) 
       } else if (value_type == "Convertion rate") {
         subcategories_to_categories <- plot_data %>%
-          select("subcategory_names", "category_names") %>%
+          select("Subcategory", "Category") %>%
           unique()
         
         plot_data <- plot_data %>%
-          select("subcategory_names", "Convertion rate") %>%
-          group_by(subcategory_names) %>%
+          select("Subcategory", "Convertion rate") %>%
+          group_by(Subcategory) %>%
           summarise(`Convertion rate` = mean(`Convertion rate`, na.rm = TRUE)) %>%
           ungroup() %>%
-          left_join(subcategories_to_categories, by = "subcategory_names")
+          left_join(subcategories_to_categories, by = "Subcategory")
         
         plot_data_ordered <- plot_data %>%
           arrange(desc(`Convertion rate`)) 
@@ -496,12 +551,15 @@ server <- function(input, output, session) {
     }
     
     # Safely get the column value, returning NA if not found
+    if (is.null(value_type)) {
+      return(rep(NA, nrow(dataset)))
+    }
     if (value_type %in% names(dataset)) {
       return(dataset[[value_type]])
     } else if (value_type == "Price by order item") {
       return(dataset$Price)
     } else {
-      if (value_type != "Price by quantity") {
+      if (value_type != "Price by bought product") {
         warning(paste0("Column '", value_type, "' not found in dataset. Returning NA values."))
       }
       return(rep(NA, nrow(dataset)))
@@ -515,14 +573,14 @@ server <- function(input, output, session) {
     value_column <- get_value_column()
     
     # Skip if there's no data or all values are NA
-    if (nrow(dataset) == 0 || all(is.na(value_column)) && value_type != "Price by quantity") {
+    if (is.null(value_type) || (nrow(dataset) == 0 || all(is.na(value_column)) && value_type != "Price by bought product")) {
       return(ggplot() + 
                annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
                theme_void())
     }
     
     # Create histogram data
-    if (value_type == "Price by quantity") {
+    if (value_type == "Price by bought product") {
       # Create a histogram of price, where count is a sum of quantities
       value_column <- dataset %>%
         group_by(Price) %>%
@@ -567,20 +625,49 @@ server <- function(input, output, session) {
         geom_histogram(data = bin_data, breaks = breaks, fill = "darkred", color = "white")
     }
     
+    title = "Distribution of"
+    switch(input$dataType,
+           "Orders" = switch(value_type,
+             "Quantity" = title <- paste(title, "quantity of items sold per order"),
+             "Total value" = title <- paste(title, "total value of orders")
+           ),
+           "Order items" = switch(value_type,
+             "Quantity" = title <- paste(title, "quantity of items sold per order item"),
+             "Price by order item" = title <- paste(title, "price by order item"),
+             "Price by bought product" = title <- paste(title, "price by bought product")
+           ),
+           "Offers" = switch(value_type,
+             "Quantity" = title <- paste(title, "quantity of items sold per offer"),
+             "Total value" = title <- paste(title, "total value generated per offer"),
+             "Convertion rate" = title <- paste(title, "convertion rate of offers")
+           ),
+           "Variants" = switch(value_type,
+             "Quantity" = title <- paste(title, "quantity of items sold per variant"),
+             "Total value" = title <- paste(title, "total value generated per variant")
+           ),
+    )
+    
     # Add labels and theme
     p <- p +
-      labs(title = paste("Distribution of", input$valueType),
-           x = input$valueType,
+      labs(title = title,
+           x = input$valueType, 
            y = "Count") +
       theme_minimal() +
       theme(
         plot.title = element_text(size = 16, face = "bold"),
-        axis.title = element_text(size = 12),
-        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 13),
+        axis.text = element_text(size = 12),
         panel.grid.major.x = element_blank(),
         panel.grid.minor.x = element_blank(),
         panel.grid.minor.y = element_blank()
       )
+    
+    if (value_type == "Total value") {
+      # Change the x scale to big number format
+      p <- p + 
+        scale_x_continuous(labels = scales::comma_format(big.mark = ",")) +
+        labs(x = "Total value (in zł)")
+    }
     
     return(p)
   })
@@ -600,19 +687,19 @@ server <- function(input, output, session) {
     
     # For categorical data like categories, subcategories, offers, and variants
     # Get the appropriate name column based on data type
-    name_col <- "category_names"
+    name_col <- "Category"
     
     # Ensure the name column exists
     if (!name_col %in% names(dataset)) {
       return(ggplot() + 
-               annotate("text", x = 0.5, y = 0.5, label = "Name column not found") + 
+               annotate("text", x = 0.5, y = 0.5, label = "Loading...") + 
                theme_void())
     }
     
     # Ensure the value column exists
-    if (!value_type %in% names(dataset)) {
+    if (is.null(value_type) || !value_type %in% names(dataset)) {
       return(ggplot() + 
-               annotate("text", x = 0.5, y = 0.5, label = paste(value_type, "column not found")) + 
+               annotate("text", x = 0.5, y = 0.5, label = "Loading...") + 
                theme_void())
     }
     
@@ -628,9 +715,9 @@ server <- function(input, output, session) {
     # Handle convertion_rate case - calculate mean
     if (value_type == "Convertion rate") {
       plot_data <- plot_data %>%
-        select(category_names, "Convertion rate", offer_id) %>%
+        select(Category, "Convertion rate", offer_id) %>%
         distinct() %>%
-        group_by(category_names) %>%
+        group_by(Category) %>%
         summarise(`Convertion rate` = mean(`Convertion rate`, na.rm = TRUE)) %>%
         ungroup()
       
@@ -642,23 +729,32 @@ server <- function(input, output, session) {
     plot_data[[name_col]] <- factor(plot_data[[name_col]],
                                     levels = rev(plot_data_ordered[[name_col]]))
     
+    
+    title = ""
+    switch(value_type,
+           "Quantity" = title <- paste(title, "Quantity of items sold per category"),
+           "Total value" = title <- paste(title, "Total value generated per category"),
+           "Convertion rate" = title <- paste(title, "Convertion rate of categories")
+    )
+
+    
     # Create the plot, order by value
     p <- ggplot(plot_data, aes(x = .data[[name_col]],
                                y = .data[[value_type]],
-                               fill = .data$category_names
+                               fill = .data$Category
                                )) +
       # apply the color palette
       scale_fill_manual(values = data()$category_colors) +
       geom_bar(stat = "identity") +
-      labs(title = paste(value_type, "by", gsub("_names", "", name_col)),
+      labs(title = title,
            x = gsub("_names", "", name_col),
            y = value_type) +
       theme_minimal() +
       theme(
-        plot.title = element_text(size = 18, face = "bold"),
-        axis.title = element_text(size = 16),
-        axis.text.y = element_text(size = 12),
+        plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 13),
         axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12, face = "bold"),
         panel.grid.minor.x = element_blank(),
         panel.grid.major.y = element_blank(),
         panel.grid.minor.y = element_blank(),
@@ -673,11 +769,11 @@ server <- function(input, output, session) {
       # so we need to use the name_col directly
       selected_data <- plot_data[plot_data[[name_col]] == selected_label, ]
       # Get the color for the selected label and change the brightness
-      if (name_col == "category_names") {
+      if (name_col == "Category") {
         selected_fill <- data()$category_colors[selected_label]
       } else {
         # Selected label is a subcategory, not categroy
-        selected_fill <- data()$category_colors[selected_data$category_names[1]]
+        selected_fill <- data()$category_colors[selected_data$Category[1]]
       }
       selected_fill <- darken(selected_fill, amount = 0.4)
       p <- p + 
@@ -709,23 +805,23 @@ server <- function(input, output, session) {
     # If we are working with orders
     if (input$dataType == "Orders") {
       p_data <- dataset %>%
-        group_by(status) %>%
+        group_by(Status) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
-        rename(label = status)
+        rename(label = Status)
     } else if (input$dataType == "Order items") {
       # If we are working with order items
       p_data <- dataset %>%
-        group_by(personalization) %>%
+        group_by(Personalization) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
-        rename(label = personalization)
+        rename(label = Personalization)
     } else if (input$dataType == "Offers" || input$dataType == "Variants") {
       p_data <- dataset %>%
-        group_by(recommended) %>%
+        group_by(Recommended) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
-        rename(label = recommended)
+        rename(label = Recommended)
     } else {
       return(ggplot() + 
                annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
@@ -740,15 +836,15 @@ server <- function(input, output, session) {
       hoverinfo = "label+percent",
       textposition = "none",
       height = 200,
-      width = 250
+      width = 300
     ) %>% layout(
       title = list(
         text = ifelse(
           input$dataType == "Orders",
-          "Order status distribution", 
+          "Distribution of order statuses",
           ifelse(input$dataType == "Order items",
-                 "Order items personalization distribution", 
-                 "Recommendation distribution"
+                 "Distribution of personalization options",
+                 "Distribution of recommendation types"
                  )
         ),
         font = list(size = 14)
@@ -779,17 +875,17 @@ server <- function(input, output, session) {
     # Shipping method pie chart
     if (input$dataType == "Orders") {
       p_data <- dataset %>%
-        group_by(shipping_method) %>%
+        group_by(`Shipping method`) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
-        rename(label = shipping_method)
+        rename(label = `Shipping method`)
     } else if (input$dataType == "Order items") {
       # If we are working with order items
       p_data <- dataset %>%
-        group_by(was_discounted) %>%
+        group_by(Discount) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
-        rename(label = was_discounted)
+        rename(label = Discount)
     } else {
       return(ggplot() + 
                annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
@@ -807,7 +903,9 @@ server <- function(input, output, session) {
       width = 250
     ) %>% layout(
       title = list(
-        text = ifelse(input$dataType == "Orders", "Order shipping method distribution", "Dicounts distribution"),
+        text = ifelse(input$dataType == "Orders",
+                      "Distribution of shipping methods",
+                      "Distribution of discounts"),
         font = list(size = 14)
       ),
       margin = list(l = 10, r = 10, b = 50, t = 50)
@@ -835,10 +933,10 @@ server <- function(input, output, session) {
     # User or anonymous pie chart
     if (input$dataType == "Orders") {
       p_data <- dataset %>%
-        group_by(user_type) %>%
+        group_by(`User type`) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
-        rename(label = user_type)
+        rename(label = `User type`)
     } else {
       return(ggplot() + 
                annotate("text", x = 0.5, y = 0.5, label = "No data available") + 
@@ -856,7 +954,7 @@ server <- function(input, output, session) {
       width = 250
     ) %>% layout(
       title = list(
-        text = "User type distribution",
+        text = "Distribution of user types",
         font = list(size = 14)
       ),
       margin = list(l = 10, r = 10, b = 50, t = 50)
@@ -883,8 +981,8 @@ server <- function(input, output, session) {
     if (input$dataType == "Orders") {
       p_data <- dataset %>%
         # This year only
-        filter(created_at >= as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01"))) %>%
-        mutate(month = format(as.Date(created_at), "%Y-%m")) %>%
+        filter(`Created at` >= as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01"))) %>%
+        mutate(month = format(as.Date(`Created at`), "%Y-%m")) %>%
         group_by(month) %>%
         summarise(value = n()) %>%
         ungroup() %>%
@@ -911,7 +1009,7 @@ server <- function(input, output, session) {
       width = 250
     ) %>% layout(
       title = list(
-        text = "Number of Orders this year by month",
+        text = paste0("Order counts by month (", format(Sys.Date(), "%Y"), ")"),
         font = list(size = 14)
       ),
       margin = list(l = 10, r = 10, b = 50, t = 50),
@@ -935,19 +1033,18 @@ server <- function(input, output, session) {
                theme_void())
     }
     
-    name_col <- "subcategory_names"
+    name_col <- "Subcategory"
     
-    # Ensure the name column exists
     if (!name_col %in% names(dataset)) {
       return(ggplot() + 
-               annotate("text", x = 0.5, y = 0.5, label = "Name column not found") + 
+               annotate("text", x = 0.5, y = 0.5, label = "Loading...") + 
                theme_void())
     }
     
     # Ensure the value column exists
-    if (!value_type %in% names(dataset)) {
+    if (is.null(value_type) || !value_type %in% names(dataset)) {
       return(ggplot() + 
-               annotate("text", x = 0.5, y = 0.5, label = paste(value_type, "column not found")) + 
+               annotate("text", x = 0.5, y = 0.5, label = "Loading...") + 
                theme_void())
     }
     
@@ -963,15 +1060,15 @@ server <- function(input, output, session) {
     # Handle convertion_rate case - calculate mean
     if (value_type == "Convertion rate") {
       subcategories_to_categories <- plot_data %>%
-        select("subcategory_names", "category_names") %>%
+        select("Subcategory", "Category") %>%
         unique()
       
       plot_data <- plot_data %>%
-        select("subcategory_names", "Convertion rate") %>%
-        group_by(subcategory_names) %>%
+        select("Subcategory", "Convertion rate") %>%
+        group_by(Subcategory) %>%
         summarise(`Convertion rate` = mean(`Convertion rate`, na.rm = TRUE)) %>%
         ungroup() %>%
-        left_join(subcategories_to_categories, by = "subcategory_names")
+        left_join(subcategories_to_categories, by = "Subcategory")
       
       plot_data_ordered <- plot_data %>%
         arrange(desc(`Convertion rate`)) 
@@ -981,23 +1078,30 @@ server <- function(input, output, session) {
     plot_data[[name_col]] <- factor(plot_data[[name_col]],
                                     levels = rev(plot_data_ordered[[name_col]]))
     
+    title = ""
+    switch (value_type,
+            "Quantity" = title <- paste(title, "Quantity of items sold per subcategory"),
+            "Total value" = title <- paste(title, "Total value generated per subcategory"),
+            "Convertion rate" = title <- paste(title, "Convertion rate of subcategories")
+    )
+    
     # Create the plot, order by value
     p <- ggplot(plot_data, aes(x = .data[[name_col]],
                                y = .data[[value_type]],
-                               fill = .data$category_names
+                               fill = .data$Category
     )) +
       # apply the color palette
       scale_fill_manual(values = data()$category_colors) +
       geom_bar(stat = "identity") +
-      labs(title = paste(value_type, "by", gsub("_names", "", name_col)),
+      labs(title = title,
            x = gsub("_names", "", name_col),
            y = value_type) +
       theme_minimal() +
       theme(
-        plot.title = element_text(size = 18, face = "bold"),
-        axis.title = element_text(size = 16),
-        axis.text.y = element_text(size = 12),
+        plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 13),
         axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12, face = "bold"),
         panel.grid.minor.x = element_blank(),
         panel.grid.major.y = element_blank(),
         panel.grid.minor.y = element_blank(),
@@ -1012,11 +1116,11 @@ server <- function(input, output, session) {
       # so we need to use the name_col directly
       selected_data <- plot_data[plot_data[[name_col]] == selected_label, ]
       # Get the color for the selected label and change the brightness
-      if (name_col == "category_names") {
+      if (name_col == "Category") {
         selected_fill <- data()$category_colors[selected_label]
       } else {
         # Selected label is a subcategory, not categroy
-        selected_fill <- data()$category_colors[selected_data$category_names[1]]
+        selected_fill <- data()$category_colors[selected_data$Category[1]]
       }
       selected_fill <- darken(selected_fill, amount = 0.4)
       p <- p + 
@@ -1038,7 +1142,7 @@ server <- function(input, output, session) {
       # Histogram click handling
       
       
-      if (value_type == "Price by quantity") {
+      if (value_type == "Price by bought product") {
         # Create a histogram of price, where count is a sum of quantities
         value_column <- dataset %>%
           group_by(Price) %>%
@@ -1091,7 +1195,7 @@ server <- function(input, output, session) {
           ))
           
           # Apply filter to the dataset - match the exact bin boundaries
-          if (value_type == "Price by order item" || value_type == "Price by quantity") {
+          if (value_type == "Price by order item" || value_type == "Price by bought product") {
             value_type <- "Price"
           }
           if (i == 1) {
@@ -1116,13 +1220,13 @@ server <- function(input, output, session) {
   observeEvent(input$categories_plot_click, {
     clicked_y <- input$categories_plot_click$y
     clicked_x <- input$categories_plot_click$x
-    handle_bar_plot_click("category_names", clicked_x, clicked_y)
+    handle_bar_plot_click("Category", clicked_x, clicked_y)
   })
   
   observeEvent(input$subcategories_plot_click, {
     clicked_y <- input$subcategories_plot_click$y
     clicked_x <- input$subcategories_plot_click$x
-    handle_bar_plot_click("subcategory_names", clicked_x, clicked_y)
+    handle_bar_plot_click("Subcategory", clicked_x, clicked_y)
   })
   
   # Reset filters when button is clicked
@@ -1180,23 +1284,43 @@ server <- function(input, output, session) {
       display_data <- display_data %>%
         left_join(data()$Offers %>% select(offer_id, name), by = "offer_id") %>%
         select(-offer_id) %>%
-        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
+        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>")) %>%
+        rename(Offer = name) %>%
+        select(
+          Offer,
+          Category,
+          Subcategory,
+          Quantity,
+          `Total value`,
+          `Convertion rate`
+        )
     } else if (input$dataType == "Offers") {
       display_data <- display_data %>%
-        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
+        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>")) %>%
+        rename(Offer = name) %>%
+        select(
+          Offer,
+          `Regular price`,
+          Quantity,
+          `Total value`,
+          Recommended,
+          `Convertion rate`
+        )
     } else if (input$dataType == "Order items") {
       # Get variant name using variant id
       display_data <- display_data %>%
-        select(-order_id, -offer_id, -created_at.x, -created_at.y, -user_id,
-               -billing_and_delivery_details_equal, -name, -subcategories,
-               -subcategory_names, -category_ids, -category_names) %>%
-        left_join(data()$Variants %>% select(variant_id, name), by = "variant_id") %>%
-        select(-variant_id) %>%
-        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>")) %>%
-        rename(Variant = name)
+        mutate(Variant = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", Variant, "</a>"))
     } else if (input$dataType == "Variants") {
       display_data <- display_data %>%
-        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
+        mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>")) %>%
+        rename(Variant = name) %>%
+        select(
+          Variant,
+          `Regular price`,
+          Quantity,
+          `Total value`,
+          Recommended
+        )
     }
     
     datatable(display_data, options = list(pageLength = 10), escape = FALSE);

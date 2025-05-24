@@ -39,9 +39,7 @@ from datetime import datetime, timedelta
 from faker import Faker
 import numpy as np
 from scipy.stats import poisson
-import pandas as pd
 from typing import List, Dict, Any
-from tqdm import tqdm
 from pathlib import Path
 
 # Set random seed for reproducibility
@@ -51,8 +49,8 @@ Faker.seed(42)
 np.random.seed(42)
 # Constants
 NUM_USERS = 100
-NUM_ORDERS = 300
-NUM_ORDER_ITEMS = 1100
+NUM_ORDERS = 500
+NUM_ORDER_ITEMS = 2300
 NUM_DISCOUNTS = 3
 NUM_OFFERS = 20
 NUM_CATEGORIES = 7
@@ -112,14 +110,21 @@ def generate_offers(num_offers: int, subcategories: List[Dict[str, Any]]) -> Lis
     offers = []
     
     for i in range(num_offers):
-        recommended = random.choices(["no", "landing_carousel", "additional_carousel", "in_category"],
-                                                weights=[0.9, 0.025, 0.05, 0.025], k=1)[0]
+        # recommended = random.choices(["no", "landing_carousel", "additional_carousel", "in_category"],
+        #                                         weights=[0.9, 0.025, 0.05, 0.025], k=1)[0]
+        recommended = "Not recommended"
+        if i == 0:
+            recommended = "Landing carousel"
+        if i == 1 or i == 2:
+            recommended = "Additional carousel"
+        if i == 3:
+            recommended = "In category"
         convertion_rate = random.normalvariate(0.05, 0.05)
-        if recommended == "landing_carousel":
+        if recommended == "Landing carousel":
             convertion_rate = random.normalvariate(0.1, 0.05)
-        elif recommended == "additional_carousel":
+        elif recommended == "Additional carousel":
             convertion_rate = random.normalvariate(0.07, 0.05)
-        elif recommended == "in_category":
+        elif recommended == "In category":
             convertion_rate = random.normalvariate(0.08, 0.05)
         convertion_rate = max(0.01, min(convertion_rate, 1))  # Ensure convertion rate is between 0 and 1
         offer = {
@@ -141,7 +146,7 @@ def generate_variants(num_variants: int, offers: List[Dict[str, Any]]) -> List[D
         suffix = fake.word()
         variant = {
             "variant_id": i,
-            "name": offer["name"] + " " + suffix,
+            "name": offer["name"] + " - " + suffix,
             "offer_id": offer["offer_id"],
             "image_count": random.randint(1, NUM_IMAGES)
         }
