@@ -105,8 +105,8 @@ def generate_price() -> float:
 
 def generate_number_of_subcategories() -> int:
     # Use poisson distribution to generate the number of subcategories
-    # with a mean of 2
-    return poisson.rvs(mu=2)
+    # with a mean of 3, minimum 1
+    return max(1, poisson.rvs(mu=2.5))
 
 def generate_offers(num_offers: int, subcategories: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     offers = []

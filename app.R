@@ -51,6 +51,10 @@ load_sample_data <- function() {
   orders <- orders %>%
     rename("Total value" = total)
   
+  # Rename convertion_rate to Convertion rate
+  offers <- offers %>%
+    rename(`Convertion rate` = convertion_rate)
+  
   # Rename quantity to Quantity and price to Price
   order_items <- order_items %>%
     rename(Quantity = quantity) %>%
@@ -113,21 +117,26 @@ load_sample_data <- function() {
     )
   
   # Calculate convertion rates and total value for subcategories
-  subcategories_summary <- order_items_with_categories %>%
+  subcategories_summary <- order_items_with_categories %>% 
+    select(
+      subcategory_names, offer_id, Quantity, Price, `Convertion rate`
+    ) %>%
     group_by(subcategory_names, offer_id) %>%
     summarise(
       Quantity = sum(Quantity, na.rm = TRUE),
       "Total value" = sum(Quantity * Price, na.rm = TRUE),
-      convertion_rate = mean(convertion_rate, na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    unnest(c(subcategory_names, offer_id)) %>%
-    # find a category name for each subcategory
+    left_join(
+      select(offers_df, c("offer_id", "Convertion rate")),
+      by = "offer_id"
+    )%>%
+    unnest(subcategory_names) %>%
     left_join(subcategories_df, by = c("subcategory_names" = "name")) %>%
     left_join(categories_df, by = c("category_id" = "category_id")) %>%
     select(-subcategory_id, -category_id) %>%
     rename(category_names = name) %>%
-    select(category_names, subcategory_names, offer_id, Quantity, "Total value", convertion_rate)
+    select(category_names, subcategory_names, offer_id, Quantity, "Total value", "Convertion rate")
       
   
   # Calculate convertion rates and total value for offers
@@ -139,7 +148,7 @@ load_sample_data <- function() {
     ) %>%
     left_join(select(
       offers_df,
-      c("offer_id", "convertion_rate", "recommended", "name")
+      c("offer_id", "Convertion rate", "recommended", "name")
     ), by = "offer_id")
   
   # Calculate statistics for variants
@@ -363,7 +372,7 @@ server <- function(input, output, session) {
     } else if (data_type == "Order items") {
       choices <- c("Quantity", "Price by order item", "Price by quantity")
     } else if (data_type %in% c("Categories", "Offers")) {
-      choices <- c("Quantity", "Total value", "convertion_rate")
+      choices <- c("Quantity", "Total value", "Convertion rate")
     } else if (data_type == "Variants") {
       choices <- c("Quantity", "Total value")
     } else {
@@ -407,6 +416,38 @@ server <- function(input, output, session) {
       group_by(.data[[name_col]]) %>%
       summarize(value = sum(.data[[value_type]]), .groups = "drop") %>%
       arrange(desc(value))
+    
+    # Handle convertion_rate case - calculate mean
+    if (value_type == "Convertion rate") {
+      if (name_col == "category_names") {
+        plot_data <- plot_data %>%
+          select(category_names, "Convertion rate", offer_id) %>%
+          distinct() %>%
+          group_by(category_names) %>%
+          summarise(`Convertion rate` = mean(`Convertion rate`, na.rm = TRUE)) %>%
+          ungroup()
+        
+        plot_data_ordered <- plot_data %>%
+          arrange(desc(`Convertion rate`)) 
+      } else if (value_type == "Convertion rate") {
+        subcategories_to_categories <- plot_data %>%
+          select("subcategory_names", "category_names") %>%
+          unique()
+        
+        plot_data <- plot_data %>%
+          select("subcategory_names", "Convertion rate") %>%
+          group_by(subcategory_names) %>%
+          summarise(`Convertion rate` = mean(`Convertion rate`, na.rm = TRUE)) %>%
+          ungroup() %>%
+          left_join(subcategories_to_categories, by = "subcategory_names")
+        
+        plot_data_ordered <- plot_data %>%
+          arrange(desc(`Convertion rate`)) 
+      } else {
+        warning(paste0("Column '", value_type, "' not found in dataset. Returning NA values."))
+        return()
+      }
+    }
     
     # Create a factor with unique levels, ordered by value
     plot_data[[name_col]] <- factor(plot_data[[name_col]],
@@ -460,7 +501,6 @@ server <- function(input, output, session) {
     } else if (value_type == "Price by order item") {
       return(dataset$Price)
     } else {
-      # TODO: rename convertion_rate
       if (value_type != "Price by quantity") {
         warning(paste0("Column '", value_type, "' not found in dataset. Returning NA values."))
       }
@@ -586,15 +626,16 @@ server <- function(input, output, session) {
       arrange(desc(value))
     
     # Handle convertion_rate case - calculate mean
-    if (value_type == "convertion_rate") {
+    if (value_type == "Convertion rate") {
       plot_data <- plot_data %>%
-        select("category_names", "convertion_rate") %>%
+        select(category_names, "Convertion rate", offer_id) %>%
+        distinct() %>%
         group_by(category_names) %>%
-        summarise(convertion_rate = mean(convertion_rate, na.rm = TRUE)) %>%
+        summarise(`Convertion rate` = mean(`Convertion rate`, na.rm = TRUE)) %>%
         ungroup()
       
       plot_data_ordered <- plot_data %>%
-        arrange(desc(convertion_rate)) 
+        arrange(desc(`Convertion rate`)) 
     }
     
     # Create a factor with unique levels, ordered by value
@@ -920,20 +961,20 @@ server <- function(input, output, session) {
       arrange(desc(value))
     
     # Handle convertion_rate case - calculate mean
-    if (value_type == "convertion_rate") {
+    if (value_type == "Convertion rate") {
       subcategories_to_categories <- plot_data %>%
         select("subcategory_names", "category_names") %>%
         unique()
       
       plot_data <- plot_data %>%
-        select("subcategory_names", "convertion_rate") %>%
+        select("subcategory_names", "Convertion rate") %>%
         group_by(subcategory_names) %>%
-        summarise(convertion_rate = mean(convertion_rate, na.rm = TRUE)) %>%
+        summarise(`Convertion rate` = mean(`Convertion rate`, na.rm = TRUE)) %>%
         ungroup() %>%
         left_join(subcategories_to_categories, by = "subcategory_names")
       
       plot_data_ordered <- plot_data %>%
-        arrange(desc(convertion_rate)) 
+        arrange(desc(`Convertion rate`)) 
     }
     
     # Create a factor with unique levels, ordered by value
