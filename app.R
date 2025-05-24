@@ -36,17 +36,36 @@ load_sample_data <- function() {
   
   # Convert date strings to dates
   orders$created_at <- as.POSIXct(orders$created_at)
-  orders$month <- format(orders$created_at, "%Y-%m")
   offers$created_at <- as.POSIXct(offers$created_at)
   discounts$created_at <- as.POSIXct(discounts$created_at)
   discounts$until <- as.POSIXct(discounts$until)
+  
+  # Format names
+  # Change first letter to capital
+  orders$status <- tools::toTitleCase(orders$status)
+  # First letter to capital and _ to space
+  orders$shipping_method <- tools::toTitleCase(gsub("_", " ", orders$shipping_method))
+  # Dpd to DPD
+  orders$shipping_method <- gsub("Dpd", "DPD", orders$shipping_method)
+  # Rename total to Total
+  orders <- orders %>%
+    rename("Total value" = total)
+  
+  # Rename quantity to Quantity and price to Price
+  order_items <- order_items %>%
+    rename(Quantity = quantity) %>%
+    rename(Price = price)
   
   # Prepare data for category analysis
   subcategories_df <- as.data.frame(subcategories)
   categories_df <- as.data.frame(categories)
   
   # Format order items for analysis
-  order_items_df <- as.data.frame(order_items)
+  order_items_df <- as.data.frame(order_items) %>%
+    mutate(
+      personalization = ifelse(personalization_mask, ifelse(design_file_id, "Drawing + File", "Drawing"), ifelse(design_file_id, "File", "None"))
+    ) %>%
+    select(-personalization_mask, -design_file_id)
   
   # Join order items with orders for time-based analysis
   order_items_with_dates <- order_items_df %>%
@@ -77,12 +96,12 @@ load_sample_data <- function() {
   orders_df <- order_items_with_dates %>%
     group_by(order_id) %>%
     summarise(
-      quantity = sum(quantity, na.rm = TRUE)
+      Quantity = sum(Quantity, na.rm = TRUE)
     ) %>%
     ungroup() %>%
-    select(order_id, quantity) %>%
+    select(order_id, Quantity) %>%
     left_join(
-      select(orders, order_id, created_at, status, shipping_method, total, user_id),
+      select(orders, order_id, created_at, status, shipping_method, "Total value", user_id),
       by = "order_id") %>%
     mutate(
       user_type = ifelse(is.na(user_id), "Anonymous", "User")
@@ -96,8 +115,8 @@ load_sample_data <- function() {
   subcategories_summary <- order_items_with_categories %>%
     group_by(subcategory_names, offer_id) %>%
     summarise(
-      quantity = sum(quantity, na.rm = TRUE),
-      total = sum(quantity * price, na.rm = TRUE),
+      Quantity = sum(Quantity, na.rm = TRUE),
+      "Total value" = sum(Quantity * Price, na.rm = TRUE),
       convertion_rate = mean(convertion_rate, na.rm = TRUE),
       .groups = "drop"
     ) %>%
@@ -107,15 +126,15 @@ load_sample_data <- function() {
     left_join(categories_df, by = c("category_id" = "category_id")) %>%
     select(-subcategory_id, -category_id) %>%
     rename(category_names = name) %>%
-    select(category_names, subcategory_names, offer_id, quantity, total, convertion_rate)
+    select(category_names, subcategory_names, offer_id, Quantity, "Total value", convertion_rate)
       
   
   # Calculate convertion rates and total value for offers
   offers_summary <- order_items_with_categories %>%
     group_by(offer_id) %>%
     summarise(
-      quantity = sum(quantity, na.rm = TRUE),
-      total = sum(quantity * price, na.rm = TRUE)
+      Quantity = sum(Quantity, na.rm = TRUE),
+      "Total value" = sum(Quantity * Price, na.rm = TRUE)
     ) %>%
     left_join(select(
       offers_df,
@@ -127,8 +146,8 @@ load_sample_data <- function() {
   variants_with_data <- order_items_with_categories %>%
     group_by(offer_id, variant_id) %>%
     summarise(
-      quantity = sum(quantity, na.rm = TRUE),
-      total = sum(quantity * price, na.rm = TRUE),
+      Quantity = sum(Quantity, na.rm = TRUE),
+      "Total value" = sum(Quantity * Price, na.rm = TRUE),
       .groups = "drop"
     ) %>%
     left_join(
@@ -146,13 +165,12 @@ load_sample_data <- function() {
   
   # Return all the prepared datasets
   return(list(
-    users = users,
-    subcategories = subcategories_summary,
-    offers = offers_summary,
-    variants = variants_with_data,
-    orders = orders_df,
-    order_items = order_items_with_categories,
-    category_colors = category_colors
+    Orders = orders_df,
+    "Order items" = order_items_with_categories,
+    Subcategories = subcategories_summary,
+    category_colors = category_colors,
+    Offers = offers_summary,
+    Variants = variants_with_data
   ))
 }
 
@@ -203,7 +221,7 @@ ui <- dashboardPage(
     fluidRow(
       box(
         width = 12,
-        title = "Filter Controls",
+        title = "Data Selection",
         status = "primary",
         solidHeader = TRUE,
         column(
@@ -211,7 +229,7 @@ ui <- dashboardPage(
           selectInput(
             "dataType",
             "Select Data Type:",
-            choices = c("orders", "order_items", "categories", "offers", "variants")
+            choices = c("Orders", "Order items", "Categories", "Offers", "Variants")
           )
         ),
         column(
@@ -221,7 +239,7 @@ ui <- dashboardPage(
         column(
           width = 2,
           conditionalPanel(
-            condition = "input.dataType != 'categories' && input.dataType != 'subcategories'",
+            condition = "input.dataType != 'Categories'",
             numericInput(
               "bins",
               "Number of Histogram Bins:",
@@ -258,16 +276,16 @@ ui <- dashboardPage(
         status = "primary",
         solidHeader = TRUE,
         conditionalPanel(
-          condition = "input.dataType == 'orders' || input.dataType == 'order_items' || input.dataType == 'offers' || input.dataType == 'variants'",
+          condition = "input.dataType == 'Orders' || input.dataType == 'Order items' || input.dataType == 'Offers' || input.dataType == 'Variants'",
           plotOutput("histogram", click = "plot_click", height = "400px")
         ),
         conditionalPanel(
-          condition = "input.dataType == 'categories'",
+          condition = "input.dataType == 'Categories'",
           plotOutput("categoriesPlot", click = "categories_plot_click", height = "400px")
         )
       ),
       conditionalPanel(
-        condition = "input.dataType == 'orders' || input.dataType == 'order_items' || input.dataType == 'offers' || input.dataType == 'variants'",
+        condition = "input.dataType == 'Orders' || input.dataType == 'Order items' || input.dataType == 'Offers' || input.dataType == 'Variants'",
         # Additional plots, 2 per row
         box(
           width = 3,
@@ -287,7 +305,7 @@ ui <- dashboardPage(
         )
       ),
       conditionalPanel(
-        condition = "input.dataType == 'categories'",
+        condition = "input.dataType == 'Categories'",
         box(
           width = 6,
           plotOutput("subcategoriesPlot", click = "subcategories_plot_click", height = "400px")
@@ -313,7 +331,7 @@ server <- function(input, output, session) {
   
   # Total value this month
   output$totalValueThisMonth <- renderText({
-    dataset <- data()$orders
+    dataset <- data()$Orders
     
     # Filter for the current month
     current_month <- format(Sys.Date(), "%Y-%m")
@@ -339,32 +357,32 @@ server <- function(input, output, session) {
   output$valueTypeUI <- renderUI({
     data_type <- input$dataType
     
-    if (data_type == "orders") {
-      choices <- c("quantity", "total")
-    } else if (data_type == "order_items") {
+    if (data_type == "Orders") {
+      choices <- c("Quantity", "Total value")
+    } else if (data_type == "Order items") {
       # TODO: rename price to price_by_records
-      choices <- c("quantity", "price", "price_by_quantity")
-    } else if (data_type %in% c("categories", "subcategories", "offers")) {
-      choices <- c("quantity", "total", "convertion_rate")
-    } else if (data_type == "variants") {
-      choices <- c("quantity", "total")
+      choices <- c("Quantity", "Price by order item", "price_by_quantity")
+    } else if (data_type %in% c("Categories", "Offers")) {
+      choices <- c("Quantity", "Total value", "convertion_rate")
+    } else if (data_type == "Variants") {
+      choices <- c("Quantity", "Total value")
     } else {
-      choices <- c("quantity")
+      choices <- c("Quantity")
     }
     
     selectInput(
       "valueType",
       "Select Value Type:",
       choices = choices,
-      selected = ifelse("quantity" %in% choices, "quantity", choices[1])
+      selected = ifelse("Quantity" %in% choices, "Quantity", choices[1])
     )
   })
   
   # Get the dataset based on user selection
   get_dataset <- reactive({
     dataset_name <- input$dataType
-    if (dataset_name == "categories") {
-      dataset_name <- "subcategories"
+    if (dataset_name == "Categories") {
+      dataset_name <- "Subcategories"
     }
     dataset <- data()[[dataset_name]]
     
@@ -439,9 +457,11 @@ server <- function(input, output, session) {
     # Safely get the column value, returning NA if not found
     if (value_type %in% names(dataset)) {
       return(dataset[[value_type]])
+    } else if (value_type == "Price by order item") {
+      return(dataset$Price)
     } else {
       if (value_type != "price_by_quantity") {
-        warning(paste("Column", value_type, "not found in dataset. Returning NA values."))
+        warning(paste0("Column '", value_type, "' not found in dataset. Returning NA values."))
       }
       return(rep(NA, nrow(dataset)))
     }
@@ -464,11 +484,11 @@ server <- function(input, output, session) {
     if (value_type == "price_by_quantity") {
       # Create a histogram of price, where count is a sum of quantities
       value_column <- dataset %>%
-        group_by(price) %>%
-        reframe(quantity = sum(quantity, na.rm = TRUE)) %>%
+        group_by(Price) %>%
+        reframe(Quantity = sum(Quantity, na.rm = TRUE)) %>%
         ungroup() %>%
         # for every row create a rep(price, quantity) vector
-        mutate(value = map2(price, quantity, ~rep(.x, .y))) %>%
+        mutate(value = map2(Price, Quantity, ~rep(.x, .y))) %>%
         select(value) %>%
         # aggregate them into a single row
         reframe(value = unlist(value))
@@ -477,10 +497,9 @@ server <- function(input, output, session) {
     
     hist_data <- data.frame(value = value_column)
     
-    # Use R's built-in histogram function to calculate exact bins as they appear in the plot
-    # TODO: calculate histogrma manually
-    h <- hist(value_column, breaks = input$bins, plot = FALSE)
-    breaks <- h$breaks
+    # Calculate histogram breaks
+    range_data <- range(hist_data$value, na.rm = TRUE)
+    breaks <- seq(from = range_data[1], to = range_data[2], length.out = input$bins + 1)
     
     # Basic plot with the same breaks that were calculated
     p <- ggplot(hist_data, aes(x = value)) +
@@ -646,23 +665,20 @@ server <- function(input, output, session) {
     
     # Status pie chart
     # If we are working with orders
-    if (input$dataType == "orders") {
+    if (input$dataType == "Orders") {
       p_data <- dataset %>%
         group_by(status) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
         rename(label = status)
-    } else if (input$dataType == "order_items") {
+    } else if (input$dataType == "Order items") {
       # If we are working with order items
       p_data <- dataset %>%
-        mutate(
-          personalization = ifelse(personalization_mask, ifelse(design_file_id, "Drawing + File", "Drawing"), ifelse(design_file_id, "File", "None"))
-        ) %>%
         group_by(personalization) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
         rename(label = personalization)
-    } else if (input$dataType == "offers" || input$dataType == "variants") {
+    } else if (input$dataType == "Offers" || input$dataType == "Variants") {
       p_data <- dataset %>%
         group_by(recommended) %>%
         summarise(percent = n()/all_rows_count) %>%
@@ -686,9 +702,9 @@ server <- function(input, output, session) {
     ) %>% layout(
       title = list(
         text = ifelse(
-          input$dataType == "orders",
+          input$dataType == "Orders",
           "Order status distribution", 
-          ifelse(input$dataType == "order_items",
+          ifelse(input$dataType == "Order items",
                  "Order items personalization distribution", 
                  "Recommendation distribution"
                  )
@@ -719,13 +735,13 @@ server <- function(input, output, session) {
     all_rows_count = nrow(dataset)
     
     # Shipping method pie chart
-    if (input$dataType == "orders") {
+    if (input$dataType == "Orders") {
       p_data <- dataset %>%
         group_by(shipping_method) %>%
         summarise(percent = n()/all_rows_count) %>%
         ungroup() %>%
         rename(label = shipping_method)
-    } else if (input$dataType == "order_items") {
+    } else if (input$dataType == "Order items") {
       # If we are working with order items
       p_data <- dataset %>%
         group_by(was_discounted) %>%
@@ -750,7 +766,7 @@ server <- function(input, output, session) {
       width = 250
     ) %>% layout(
       title = list(
-        text = ifelse(input$dataType == "orders", "Order shipping method distribution", "Dicounts distribution"),
+        text = ifelse(input$dataType == "Orders", "Order shipping method distribution", "Dicounts distribution"),
         font = list(size = 14)
       ),
       margin = list(l = 10, r = 10, b = 50, t = 50)
@@ -776,7 +792,7 @@ server <- function(input, output, session) {
     all_rows_count = nrow(dataset)
     
     # User or anonymous pie chart
-    if (input$dataType == "orders") {
+    if (input$dataType == "Orders") {
       p_data <- dataset %>%
         group_by(user_type) %>%
         summarise(percent = n()/all_rows_count) %>%
@@ -823,7 +839,7 @@ server <- function(input, output, session) {
     }
     
     # Orders by date pie chart
-    if (input$dataType == "orders") {
+    if (input$dataType == "Orders") {
       p_data <- dataset %>%
         # This year only
         filter(created_at >= as.Date(paste0(format(Sys.Date(), "%Y"), "-01-01"))) %>%
@@ -854,7 +870,7 @@ server <- function(input, output, session) {
       width = 250
     ) %>% layout(
       title = list(
-        text = "Number of orders this year by month",
+        text = "Number of Orders this year by month",
         font = list(size = 14)
       ),
       margin = list(l = 10, r = 10, b = 50, t = 50),
@@ -976,7 +992,7 @@ server <- function(input, output, session) {
     data_type <- input$dataType
     
     # Different handling for histogram vs bar plot
-    if (data_type %in% c("orders", "order_items", "offers", "variants")) {
+    if (data_type %in% c("Orders", "Order items", "Offers", "Variants")) {
       # Histogram click handling
       value_column <- get_value_column()
       
@@ -988,9 +1004,9 @@ server <- function(input, output, session) {
         return()
       }
       
-      # Use R's built-in histogram function to calculate exact bins as they appear in the plot
-      h <- hist(value_column, breaks = input$bins, plot = FALSE)
-      breaks <- h$breaks
+      # Calculate histogram breaks
+      range_data <- range(value_column, na.rm = TRUE)
+      breaks <- seq(from = range_data[1], to = range_data[2], length.out = input$bins + 1)
       
       # Find which bin was clicked
       for (i in 1:(length(breaks) - 1)) {
@@ -1018,6 +1034,9 @@ server <- function(input, output, session) {
           
           # Apply filter to the dataset - match the exact bin boundaries
           value_type <- input$valueType
+          if (value_type == "Price by order item") {
+            value_type <- "Price"
+          }
           if (i == 1) {
             # Include the endpoint for the first bin
             filtered <- dataset[dataset[[value_type]] >= bin_start & dataset[[value_type]] <= bin_end, ]
@@ -1060,6 +1079,22 @@ server <- function(input, output, session) {
     filtered_data(NULL)
   })
   
+  observeEvent(c(input$dataType, input$valueType), {
+    # get proposed number of bins with hist()
+    if (is.null(input$dataType) || is.null(input$valueType)) {
+      return()
+    }
+    value_column <- get_value_column()
+    if (length(value_column) == 0 || all(is.na(value_column))) {
+      updateNumericInput(session, "bins", value = 10)
+      return()
+    }
+    breaks <- hist(value_column, plot = FALSE)$breaks
+    # Calculate the number of bins based on breaks
+    num_bins <- length(breaks) - 1
+    updateNumericInput(session, "bins", value = num_bins)
+  })
+  
   # Render the data table
   output$dataTable <- renderDT({
     # If filtered data exists, show it, otherwise show the full dataset
@@ -1083,26 +1118,26 @@ server <- function(input, output, session) {
       }
     }
     
-    if (input$dataType == "categories" || input$dataType == "subcategories") {
+    if (input$dataType == "Categories") {
       # Get offer name using offer id
       display_data <- display_data %>%
-        left_join(data()$offers %>% select(offer_id, name), by = "offer_id") %>%
+        left_join(data()$Offers %>% select(offer_id, name), by = "offer_id") %>%
         select(-offer_id) %>%
         mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
-    } else if (input$dataType == "offers") {
+    } else if (input$dataType == "Offers") {
       display_data <- display_data %>%
         mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
-    } else if (input$dataType == "order_items") {
+    } else if (input$dataType == "Order items") {
       # Get variant name using variant id
       display_data <- display_data %>%
         select(-order_id, -offer_id, -created_at.x, -created_at.y, -user_id,
-               -billing_and_delivery_details_equal, -name, -month, -subcategories,
+               -billing_and_delivery_details_equal, -name, -subcategories,
                -subcategory_names, -category_ids, -category_names) %>%
-        left_join(data()$variants %>% select(variant_id, name), by = "variant_id") %>%
+        left_join(data()$Variants %>% select(variant_id, name), by = "variant_id") %>%
         select(-variant_id) %>%
         mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>")) %>%
         rename(Variant = name)
-    } else if (input$dataType == "variants") {
+    } else if (input$dataType == "Variants") {
       display_data <- display_data %>%
         mutate(name = paste0("<a href='https://albox.pl/offer/kubek-oslo-wlasny-projekt-45/czarny-86'>", name, "</a>"))
     }
