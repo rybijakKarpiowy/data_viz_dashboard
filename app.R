@@ -21,8 +21,7 @@ load_json_data <- function(file_path) {
   })
 }
 
-# Data preparation function
-load_sample_data <- function() {
+load_raw_data <- function() {
   # Load all the data from JSON files
   users <- load_json_data("generated_data/users.json")
   categories <- load_json_data("generated_data/categories.json")
@@ -33,11 +32,47 @@ load_sample_data <- function() {
   order_items <- load_json_data("generated_data/order_items.json")
   discounts <- load_json_data("generated_data/discounts.json")
   
+  return(list(
+    users = users,
+    categories = categories,
+    subcategories = subcategories,
+    offers = offers,
+    variants = variants,
+    orders = orders,
+    order_items = order_items,
+    discounts = discounts
+  ))
+}
+
+# Data preparation function
+preprocess_data <- function(raw_data, date_range) {
+  # Load all the data from raw data
+  users <- raw_data$users
+  categories <- raw_data$categories
+  subcategories <- raw_data$subcategories
+  offers <- raw_data$offers
+  variants <- raw_data$variants
+  orders <- raw_data$orders
+  order_items <- raw_data$order_items
+  discounts <- raw_data$discounts
+  
   # Convert date strings to dates
   orders$created_at <- as.POSIXct(orders$created_at)
   offers$created_at <- as.POSIXct(offers$created_at)
   discounts$created_at <- as.POSIXct(discounts$created_at)
   discounts$until <- as.POSIXct(discounts$until)
+  
+  # Filter order dates
+  if (!is.null(date_range) && length(date_range) == 2) {
+    start_date <- as.POSIXct(date_range[1])
+    end_date <- as.POSIXct(date_range[2])
+    
+    orders <- orders %>%
+      filter(created_at >= start_date & created_at <= end_date)
+    
+    order_items <- order_items %>%
+      filter(order_id %in% orders$order_id)
+  }
   
   # Format names
   # Change first letter to capital
@@ -330,6 +365,7 @@ ui <- dashboardPage(
           display: flex;
           align-items: center;
           background: white !important;
+          margin: auto;
         }
         
         .small-valuebox .small-box h3 {
@@ -588,7 +624,8 @@ ui <- dashboardPage(
 # Define server logic
 server <- function(input, output, session) {
   # Load data
-  data <- reactiveVal(load_sample_data())
+  raw_data = load_raw_data()
+  data <- reactive(preprocess_data(raw_data, input$dateRange))
   
   # Total value this month
   output$totalValueThisMonth <- renderText({
@@ -1457,6 +1494,13 @@ server <- function(input, output, session) {
   # Reset filters when button is clicked
   observeEvent(input$resetDateFilters, {
     updateDateRangeInput(session, "dateRange", start = "2020-01-01", end = Sys.Date())
+  })
+  
+  # Reset filters on date change
+  observeEvent(input$dateRange, {
+    selected_bin(NULL)
+    selected_column(NULL)
+    filtered_data(NULL)
   })
   
   # Reset filters when data type, value type or bins are changed
