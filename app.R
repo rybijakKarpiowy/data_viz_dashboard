@@ -318,6 +318,36 @@ ui <- dashboardPage(
     title = tags$div(
       tags$img(src = "https://albox.pl/logo.webp", height = "30px"),
       "Albox Dashboard"
+    ),
+    tags$li(
+      class = "dropdown",
+      tags$a(
+        href = "#",
+        class = "dropdown-toggle",
+        `data-toggle` = "dropdown",
+        tags$i(class = "fa fa-question-circle"),
+        " Help",
+        tags$b(class = "caret")
+      ),
+      tags$ul(
+        class = "dropdown-menu",
+        tags$li(
+          tags$a(
+            href = "#",
+            onclick = "openModal('helpModal')",
+            tags$i(class = "fa fa-life-ring"),
+            " User Guide"
+          )
+        ),
+        tags$li(
+          tags$a(
+            href = "#",
+            onclick = "openModal('aboutModal')",
+            tags$i(class = "fa fa-info-circle"),
+            " About"
+          )
+        )
+      )
     )
   ),
   dashboardSidebar(disable = TRUE),
@@ -329,6 +359,15 @@ ui <- dashboardPage(
           background-color: #ffffff !important;
           color: #000000 !important;
           border: none !important;
+        }
+        
+        /* Header dropdown styling */
+        .main-header .navbar .nav > li > a {
+          color: #333 !important;
+        }
+        
+        .main-header .navbar .nav > li > a:hover {
+          background-color: #f4f4f4 !important;
         }
         
         /* Remove box borders and shadows */
@@ -457,7 +496,310 @@ ui <- dashboardPage(
           padding-bottom: 8px;
           border-bottom: 2px solid #3498db;
         }
+        
+        /* Modal styling */
+        .modal-overlay {
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background-color: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+          background-color: #fefefe;
+          margin: 5% auto;
+          padding: 0;
+          border: none;
+          border-radius: 8px;
+          width: 90%;
+          max-width: 800px;
+          max-height: 80vh;
+          overflow-y: auto;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        
+        .modal-header {
+          background-color: #3498db;
+          color: white;
+          padding: 20px;
+          border-radius: 8px 8px 0 0;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        
+        .modal-header h2 {
+          margin: 0;
+          font-size: 24px;
+        }
+        
+        .modal-body {
+          padding: 30px;
+          line-height: 1.6;
+        }
+        
+        .modal-body h3 {
+          color: #2c3e50;
+          margin-top: 25px;
+          margin-bottom: 15px;
+          font-size: 18px;
+          border-bottom: 2px solid #ecf0f1;
+          padding-bottom: 5px;
+        }
+        
+        .modal-body h4 {
+          color: #34495e;
+          margin-top: 20px;
+          margin-bottom: 10px;
+          font-size: 16px;
+        }
+        
+        .modal-body p {
+          margin-bottom: 15px;
+          color: #555;
+        }
+        
+        .modal-body ul {
+          margin-bottom: 15px;
+          padding-left: 20px;
+        }
+        
+        .modal-body li {
+          margin-bottom: 8px;
+          color: #555;
+        }
+        
+        .close {
+          color: white;
+          font-size: 28px;
+          font-weight: bold;
+          cursor: pointer;
+          border: none;
+          background: none;
+        }
+        
+        .close:hover {
+          opacity: 0.7;
+        }
+        
+        .feature-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+          gap: 20px;
+          margin: 20px 0;
+        }
+        
+        .feature-item {
+          background: #f8f9fa;
+          padding: 15px;
+          border-radius: 6px;
+          border-left: 4px solid #3498db;
+        }
+        
+        .feature-item h4 {
+          margin-top: 0;
+          color: #2c3e50;
+        }
+        
+        .tip-box {
+          background: #e8f5e8;
+          border: 1px solid #c3e6c3;
+          border-radius: 6px;
+          padding: 15px;
+          margin: 15px 0;
+        }
+        
+        .tip-box strong {
+          color: #2d5a2d;
+        }
+      ")),
+      tags$script(HTML("
+        function openModal(modalId) {
+          document.getElementById(modalId).style.display = 'block';
+        }
+        
+        function closeModal(modalId) {
+          document.getElementById(modalId).style.display = 'none';
+        }
+        
+        // Close modal when clicking outside of it
+        window.onclick = function(event) {
+          if (event.target.classList.contains('modal-overlay')) {
+            event.target.style.display = 'none';
+          }
+        }
       "))
+    ),
+    
+    # Help Modal
+    div(
+      id = "helpModal",
+      class = "modal-overlay",
+      div(
+        class = "modal-content",
+        div(
+          class = "modal-header",
+          h2("User Guide"),
+          tags$button(
+            class = "close",
+            onclick = "closeModal('helpModal')",
+            "×"
+          )
+        ),
+        div(
+          class = "modal-body",
+          h3("Getting Started"),
+          p("This dashboard provides comprehensive analytics for Albox e-commerce data. Use the controls and visualizations to explore different aspects of your business performance."),
+          
+          h3("Data Controls"),
+          h4("Data Type Selection"),
+          p("Choose from five different data views:"),
+          tags$ul(
+            tags$li(tags$strong("Orders:"), " Analysis of complete orders including quantities, values, and customer information"),
+            tags$li(tags$strong("Order Items:"), " Individual items within orders, including personalization and pricing details"),
+            tags$li(tags$strong("Categories:"), " Product category performance and subcategory breakdowns"),
+            tags$li(tags$strong("Offers:"), " Individual product offers with conversion rates and recommendations"),
+            tags$li(tags$strong("Variants:"), " Product variants and their performance metrics")
+          ),
+          
+          h4("Value Type Selection"),
+          p("Depending on your selected data type, you can analyze different metrics:"),
+          tags$ul(
+            tags$li(tags$strong("Quantity:"), " Number of items sold"),
+            tags$li(tags$strong("Total Value:"), " Revenue generated"),
+            tags$li(tags$strong("Conversion Rate:"), " Success rate of offers (Categories/Offers only)"),
+            tags$li(tags$strong("Price Variations:"), " Different pricing perspectives (Order Items only)")
+          ),
+          
+          h4("Date Range Filter"),
+          p("Use the date range selector to filter data for specific time periods. Click 'Clear Date Filters' to reset to the full date range."),
+          
+          h3("Interactive Visualizations"),
+          h4("Histogram Interaction"),
+          p("For Orders, Order Items, Offers, and Variants data:"),
+          tags$ul(
+            tags$li("Click on any histogram bar to filter the data to that specific range"),
+            tags$li("The selected bin will be highlighted in dark red"),
+            tags$li("Click the same bin again to clear the filter"),
+            tags$li("Adjust the number of bins using the 'Histogram Bins' control")
+          ),
+          
+          h4("Bar Chart Interaction"),
+          p("For Categories data:"),
+          tags$ul(
+            tags$li("Click on category or subcategory bars to filter the data"),
+            tags$li("Selected categories will be highlighted with a darker color"),
+            tags$li("Click the same bar again to clear the selection")
+          ),
+          
+          h3("Additional Charts"),
+          p("The dashboard automatically displays relevant pie charts and additional visualizations based on your selected data type:"),
+          tags$ul(
+            tags$li(tags$strong("Orders:"), " Order status, shipping methods, user types, and monthly trends"),
+            tags$li(tags$strong("Order Items:"), " Personalization options and discount distribution"),
+            tags$li(tags$strong("Offers/Variants:"), " Recommendation type distribution")
+          ),
+          
+          h3("Data Table"),
+          p("The bottom section shows a detailed table of your current data selection. When you filter using the charts, this table updates to show only the filtered results."),
+          
+          div(
+            class = "tip-box",
+            tags$strong("💡 Pro Tip:"), " Use the combination of date filters and chart interactions to drill down into specific segments of your data for detailed analysis."
+          )
+        )
+      )
+    ),
+    
+    # About Modal
+    div(
+      id = "aboutModal",
+      class = "modal-overlay",
+      div(
+        class = "modal-content",
+        div(
+          class = "modal-header",
+          h2("About Albox Dashboard"),
+          tags$button(
+            class = "close",
+            onclick = "closeModal('aboutModal')",
+            "×"
+          )
+        ),
+        div(
+          class = "modal-body",
+          h3("Overview"),
+          p("The Albox Dashboard is a comprehensive business intelligence tool designed to provide deep insights into e-commerce performance. Built specifically for analyzing order data, product performance, and customer behavior patterns."),
+          
+          h3("Key Features"),
+          div(
+            class = "feature-grid",
+            div(
+              class = "feature-item",
+              h4("📊 Interactive Analytics"),
+              p("Click-to-filter histograms and bar charts for dynamic data exploration")
+            ),
+            div(
+              class = "feature-item",
+              h4("📅 Time-based Filtering"),
+              p("Flexible date range selection to analyze specific time periods")
+            ),
+            div(
+              class = "feature-item",
+              h4("🎯 Multi-dimensional Analysis"),
+              p("Analyze data across orders, items, categories, offers, and variants")
+            ),
+            div(
+              class = "feature-item",
+              h4("📈 Real-time Metrics"),
+              p("Current month revenue tracking and performance indicators")
+            ),
+            div(
+              class = "feature-item",
+              h4("🎨 Rich Visualizations"),
+              p("Histograms, pie charts, bar charts, and detailed data tables")
+            ),
+            div(
+              class = "feature-item",
+              h4("🔗 Integrated Data"),
+              p("Seamless connection between orders, products, and customer data")
+            )
+          ),
+          
+          h3("Data Sources"),
+          p("The dashboard processes data from multiple JSON sources:"),
+          tags$ul(
+            tags$li("User information and customer segmentation"),
+            tags$li("Product categories and subcategories"),
+            tags$li("Offers and product variants"),
+            tags$li("Order and order item details"),
+            tags$li("Discount and promotion data")
+          ),
+          
+          h3("Technical Information"),
+          p("Built with modern web technologies:"),
+          tags$ul(
+            tags$li(tags$strong("R Shiny:"), " Reactive web application framework"),
+            tags$li(tags$strong("ggplot2 & plotly:"), " Advanced data visualization"),
+            tags$li(tags$strong("DT:"), " Interactive data tables"),
+            tags$li(tags$strong("dplyr & tidyr:"), " Data manipulation and transformation")
+          ),
+          
+          h3("Version & Updates"),
+          p("Dashboard Version: 2.0"),
+          p("Last Updated: ", format(Sys.Date(), "%B %Y")),
+          p("For technical support or feature requests, please contact the development team."),
+          
+          div(
+            class = "tip-box",
+            tags$strong("🚀 New in this version:"), " Enhanced interactivity, improved filtering, and comprehensive help documentation."
+          )
+        )
+      )
     ),
     
     # Data Selection Section
