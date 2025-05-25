@@ -191,9 +191,46 @@ load_sample_data <- function() {
       by = "variant_id"
     )
   
+  palette <- c('#1f77b4', '#ff7f0e', '#2ca02c', '#d62728',
+              '#9467bd', '#e377c2', '#7f7f7f',
+              '#bcbd22', '#17becf')
+  
+  # Category colors
   all_categories = categories_df$name
-  category_colors <- scales::hue_pal()(length(all_categories))
+  category_colors <- palette[1:length(all_categories)]
   names(category_colors) <- all_categories
+  
+  # Statuses colors
+  all_statuses <- c("Delivered", "Paid", "Cancelled", "Pending", "Shipped")
+  status_colors <- palette[1:length(all_statuses)]
+  names(status_colors) <- all_statuses
+  
+  # Shipping methods colors
+  all_shipping_methods <- c("Paczkomat Inost", "Kurier DPD", "Kurier Inpost")
+  shipping_method_colors <- palette[1:length(all_shipping_methods)]
+  names(shipping_method_colors) <- all_shipping_methods
+  
+  # User type colors
+  user_types <- c("User", "Anonymous")
+  user_type_colors <- palette[1:length(user_types)]
+  names(user_type_colors) <- user_types
+  
+  # Personalization colors
+  personalization_types <- c("None", "File", "Drawing", "Drawing + File")
+  personalization_colors <- palette[1:length(personalization_types)]
+  names(personalization_colors) <- personalization_types
+  
+  # Discount colors
+  discount_types <- c("No discount", "Discount")
+  discount_colors <- palette[1:length(discount_types)]
+  names(discount_colors) <- discount_types
+  
+  # Recommendation colors
+  recommendation_types <- c("Not recommended", "Additional carousel",
+                            "Landing carousel", "In category")
+  recommendation_colors <- palette[1:length(recommendation_types)]
+  names(recommendation_colors) <- recommendation_types
+  
   
   order_items_summary <- order_items_with_categories %>%
     select(-offer_id, -user_id,
@@ -228,9 +265,15 @@ load_sample_data <- function() {
     Orders = orders_df,
     "Order items" = order_items_summary,
     Subcategories = subcategories_summary,
-    category_colors = category_colors,
     Offers = offers_summary,
-    Variants = variants_summary
+    Variants = variants_summary,
+    category_colors = category_colors,
+    status_colors = status_colors,
+    shipping_method_colors = shipping_method_colors,
+    user_type_colors = user_type_colors,
+    personalization_colors = personalization_colors,
+    discount_colors = discount_colors,
+    recommendation_colors = recommendation_colors
   ))
 }
 
@@ -238,151 +281,304 @@ load_sample_data <- function() {
 ui <- dashboardPage(
   dashboardHeader(
     title = tags$div(
-    tags$img(src = "https://albox.pl/logo.webp", height = "30px"),
-    "Albox Dashboard"
+      tags$img(src = "https://albox.pl/logo.webp", height = "30px"),
+      "Albox Dashboard"
     )
   ),
   dashboardSidebar(disable = TRUE),
   dashboardBody(
     tags$head(
       tags$style(HTML("
+        /* Remove default shinydashboard styling */
         .main-header .logo {
           background-color: #ffffff !important;
           color: #000000 !important;
-          border: 2px solid #000000 !important;
+          border: none !important;
         }
+        
+        /* Remove box borders and shadows */
+        .box {
+          border: none !important;
+          box-shadow: none !important;
+          background: transparent !important;
+        }
+        
+        .box-header {
+          border-bottom: none !important;
+          padding-bottom: 0px !important;
+        }
+        
+        .box-body {
+          padding-top: 10px !important;
+        }
+        
+        /* Clean content wrapper */
+        .content-wrapper {
+          background-color: #f8f9fa !important;
+        }
+        
+        .content {
+          padding: 15px !important;
+        }
+        
+        /* Simplified value box styling */
         .small-valuebox .small-box {
-          padding-x: 10px;
+          border: none !important;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+          border-radius: 8px !important;
+          padding: 15px !important;
           display: flex;
           align-items: center;
+          background: white !important;
         }
+        
         .small-valuebox .small-box h3 {
-          font-size: 20px; /* reduce value font size */
+          font-size: 24px;
+          font-weight: 600;
           margin: 0;
+          color: #2c3e50;
         }
+        
         .small-valuebox .small-box p {
-          font-size: 16px; /* reduce subtitle font size */
+          font-size: 14px;
           margin: 0;
+          color: #7f8c8d;
+          font-weight: 500;
         }
+        
         .small-valuebox .icon-large {
-          font-size: 40px;            /* Smaller icon */
-          line-height: 40px;          /* Match box height for vertical centering */
-          height: 40px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          font-size: 32px;
+          color: #27ae60;
           position: absolute;
-          top: 16px;
-          right: 16px;
+          top: 20px;
+          right: 20px;
+          opacity: 0.8;
+        }
+        
+        /* Input styling */
+        .form-control, .selectize-input {
+          border: 1px solid #e9ecef !important;
+          border-radius: 6px !important;
+          box-shadow: none !important;
+        }
+        
+        .form-control:focus, .selectize-input.focus {
+          border-color: #3498db !important;
+          box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25) !important;
+        }
+        
+        /* Button styling */
+        .btn {
+          border: none !important;
+          border-radius: 6px !important;
+          font-weight: 500 !important;
+          transition: all 0.2s ease !important;
+        }
+        
+        .btn-danger {
+          background-color: #e74c3c !important;
+          color: white !important;
+        }
+        
+        .btn-danger:hover {
+          background-color: #c0392b !important;
+          transform: translateY(-1px) !important;
+        }
+        
+        /* Plot containers */
+        .plot-container {
+          background: white;
+          border-radius: 8px;
+          padding: 15px;
+          margin-bottom: 20px;
+        }
+        
+        /* Horizontal plot arrangement */
+        .plots-horizontal {
+          display: flex;
+          gap: 15px;
+          align-items: flex-start;
+        }
+        
+        .plots-horizontal > div {
+          flex: 1;
+        }
+        
+        /* Table styling */
+        .dataTables_wrapper {
+          background: white !important;
+          border-radius: 8px !important;
+          padding: 20px !important;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+        }
+        
+        /* Section headers */
+        .section-header {
+          font-size: 18px;
+          font-weight: 600;
+          color: #2c3e50;
+          margin-bottom: 15px;
+          padding-bottom: 8px;
+          border-bottom: 2px solid #3498db;
         }
       "))
     ),
     
+    # Data Selection Section
+    div(
+      class = "section-header",
+      "Data Selection & Controls"
+    ),
+    
     fluidRow(
-      box(
-        width = 12,
-        title = "Data Selection",
-        status = "primary",
-        solidHeader = TRUE,
-        column(
-          width = 2,
-          selectInput(
-            "dataType",
-            "Select Data Type:",
-            choices = c("Orders", "Order items", "Categories", "Offers", "Variants")
+      style = "display: flex; gap: 15px;",
+      column(
+        width = 2,
+        selectInput(
+          "dataType",
+          "Data Type:",
+          choices = c("Orders", "Order items", "Categories", "Offers", "Variants")
+        ),
+        # Date selector
+        dateRangeInput(
+          "dateRange",
+          "Date Range:",
+          start = "2020-01-01",
+          end = Sys.Date(),
+          min = "2020-01-01",
+          max = Sys.Date(),
+          format = "yyyy-mm-dd"
+        )
+      ),
+      column(
+        width = 2,
+        style = "height: 100%; display: flex; flex-direction: column;
+                justify-content: center; gap: 25px;",
+        uiOutput("valueTypeUI"),
+        actionButton("resetDateFilters", "Clear Date Filters", 
+                     class = "btn btn-danger btn-sm",
+                     style = "max-width: 150px;")
+      ),
+      column(
+        width = 2,
+        conditionalPanel(
+          condition = "input.dataType != 'Categories'",
+          numericInput(
+            "bins",
+            "Histogram Bins:",
+            value = 10,
+            min = 1,
+            max = 50
           )
-        ),
-        column(
-          width = 2,
-          uiOutput("valueTypeUI")  # Dynamic UI for value type based on data type
-        ),
-        column(
-          width = 2,
-          conditionalPanel(
-            condition = "input.dataType != 'Categories'",
-            numericInput(
-              "bins",
-              "Number of Histogram Bins:",
-              value = 10,
-              min = 1,
-              max = 50
-            )
-          )
-        ),
-        column(
-          width = 1,
-          actionButton("resetFilters", "Remove Filters", class = "btn-danger"),
-          style = "margin-top: 25px;"
-        ),
-        column(
-          width = 4,
-          div(
-            class = "small-valuebox",
-            valueBox(
-              value = htmlOutput("totalValueThisMonth"),
-              subtitle = "Total value of orders this month",
-              icon = icon("coins"),
-              color = "green",
-              width = 8
-            )
+        )
+      ),
+      column(
+        width = 2,
+        br()
+      ),
+      column(
+        width = 4,
+        div(
+          class = "small-valuebox",
+          valueBox(
+            value = htmlOutput("totalValueThisMonth"),
+            subtitle = "Total orders value this month",
+            icon = icon("chart-line"),
+            color = "green",
+            width = 12
           )
         )
       )
     ),
+    
+    br(),
+    
+    # Visualization Section
+    div(
+      class = "section-header",
+      "Data Visualization"
+    ),
+    
     fluidRow(
-      box(
+      column(
         width = 6,
-        title = "Data Visualization",
-        status = "primary",
-        solidHeader = TRUE,
+        div(
+          class = "plot-container",
+          conditionalPanel(
+            condition = "input.dataType == 'Orders' || input.dataType == 'Order items' || input.dataType == 'Offers' || input.dataType == 'Variants'",
+            plotOutput("histogram", click = "plot_click", height = "450px")
+          ),
+          conditionalPanel(
+            condition = "input.dataType == 'Categories'",
+            plotOutput("categoriesPlot", click = "categories_plot_click", height = "400px")
+          )
+        )
+      ),
+      
+      column(
+        width =  6,
+        
         conditionalPanel(
-          condition = "input.dataType == 'Orders' || input.dataType == 'Order items' || input.dataType == 'Offers' || input.dataType == 'Variants'",
-          plotOutput("histogram", click = "plot_click", height = "400px")
+          condition = "input.dataType != 'Categories'",
+          div(
+            class = "plot-container",
+            div(
+              class = "plots-horizontal",
+              div(
+                conditionalPanel(
+                  condition = "input.dataType != 'Categories'",
+                  plotlyOutput("additionalPlot1", height = "200px")
+                )
+              ),
+              div(
+                conditionalPanel(
+                  condition = "input.dataType != 'Categories' && input.dataType != 'Offers' && input.dataType != 'Variants'",
+                  plotlyOutput("additionalPlot2", height = "200px")
+                )
+              )
+            )
+          )
         ),
+        
+        # Additional plots for Orders data type
+        conditionalPanel(
+          condition = "input.dataType == 'Orders'",
+          fluidRow(
+            column(
+              width = 12,
+              div(
+                class = "plot-container",
+                div(
+                  class = "plots-horizontal",
+                  div(plotlyOutput("additionalPlot3", height = "200px")),
+                  div(plotlyOutput("additionalPlot4", height = "200px"))
+                )
+              )
+            )
+          )
+        ),
+        
         conditionalPanel(
           condition = "input.dataType == 'Categories'",
-          plotOutput("categoriesPlot", click = "categories_plot_click", height = "400px")
-        )
-      ),
-      conditionalPanel(
-        condition = "input.dataType != 'Categories'",
-        box(
-          width = 3,
-          plotlyOutput("additionalPlot1", height = "200px")
-        )
-      ),
-      conditionalPanel(
-        condition = "input.dataType != 'Categories' && input.dataType != 'Offers' && input.dataType != 'Variants'",
-        box(
-          width = 3,
-          plotlyOutput("additionalPlot2", height = "200px")
-        )
-      ),
-      conditionalPanel(
-        condition = "input.dataType == 'Orders'",
-        box(
-          width = 3,
-          plotlyOutput("additionalPlot3", height = "200px")
-        ),
-        box(
-          width = 3,
-          plotlyOutput("additionalPlot4", height = "200px")
-        )
-      ),
-      conditionalPanel(
-        condition = "input.dataType == 'Categories'",
-        box(
-          width = 6,
-          plotOutput("subcategoriesPlot", click = "subcategories_plot_click", height = "400px")
+          div(
+            class = "plot-container",
+            plotOutput("subcategoriesPlot", click = "subcategories_plot_click", height = "400px")
+          )
         )
       )
     ),
+    
+    br(),
+    
+    # Data Table Section
+    div(
+      class = "section-header",
+      "Data Table"
+    ),
+    
     fluidRow(
-      box(
+      column(
         width = 12,
-        title = "Data Table",
-        status = "primary",
-        solidHeader = TRUE,
         DTOutput("dataTable")
       )
     )
@@ -644,7 +840,7 @@ server <- function(input, output, session) {
            "Variants" = switch(value_type,
              "Quantity" = title <- paste(title, "quantity of items sold per variant"),
              "Total value" = title <- paste(title, "total value generated per variant")
-           ),
+           )
     )
     
     # Add labels and theme
@@ -752,7 +948,8 @@ server <- function(input, output, session) {
       theme_minimal() +
       theme(
         plot.title = element_text(size = 16, face = "bold"),
-        axis.title = element_text(size = 13),
+        axis.title.x = element_text(size = 13),
+        axis.title.y = element_blank(),
         axis.text.x = element_text(size = 12),
         axis.text.y = element_text(size = 12, face = "bold"),
         panel.grid.minor.x = element_blank(),
@@ -777,8 +974,14 @@ server <- function(input, output, session) {
       }
       selected_fill <- darken(selected_fill, amount = 0.4)
       p <- p + 
-        geom_bar(data = selected_data, aes(x = .data[[name_col]], y = .data[[value_type]]),
-                 stat = "identity", fill = selected_fill)
+        geom_bar(
+          data = selected_data,
+          aes(x = .data[[name_col]],
+          y = .data[[value_type]]
+          ),
+          stat = "identity",
+          fill = selected_fill
+        )
     }
     
     return(p)
@@ -828,6 +1031,14 @@ server <- function(input, output, session) {
                theme_void())
     }
     
+    marker <- list(
+      colors = switch(input$dataType,
+                      "Orders" = data()$status_colors[p_data$label],
+                      "Order items" = data()$personalization_colors[p_data$label],
+                      "Offers" = data()$recommendation_colors[p_data$label],
+                      "Variants" = data()$recommendation_colors[p_data$label])
+    )
+    
     p <- plot_ly(
       data = p_data,
       labels = ~label,
@@ -835,8 +1046,9 @@ server <- function(input, output, session) {
       type = "pie",
       hoverinfo = "label+percent",
       textposition = "none",
-      height = 200,
-      width = 300
+      height = 210,
+      width = 300,
+      marker = marker
     ) %>% layout(
       title = list(
         text = ifelse(
@@ -892,6 +1104,12 @@ server <- function(input, output, session) {
                theme_void())
     }
     
+    marker = list(
+      colors = switch(input$dataType,
+                      "Orders" = data()$shipping_method_colors[p_data$label],
+                      "Order items" = data()$discount_colors[p_data$label])
+    )
+    
     p <- plot_ly(
       data = p_data,
       labels = ~label,
@@ -899,8 +1117,9 @@ server <- function(input, output, session) {
       type = "pie",
       hoverinfo = "label+percent",
       textposition = "none",
-      height = 200,
-      width = 250
+      height = 210,
+      width = 300,
+      marker = marker
     ) %>% layout(
       title = list(
         text = ifelse(input$dataType == "Orders",
@@ -943,6 +1162,10 @@ server <- function(input, output, session) {
                theme_void())
     }
     
+    marker <- list(
+      colors = data()$user_type_colors[p_data$label]
+    )
+    
     p <- plot_ly(
       data = p_data,
       labels = ~label,
@@ -950,8 +1173,9 @@ server <- function(input, output, session) {
       type = "pie",
       hoverinfo = "label+percent",
       textposition = "none",
-      height = 200,
-      width = 250
+      height = 210,
+      width = 300,
+      marker = marker
     ) %>% layout(
       title = list(
         text = "Distribution of user types",
@@ -1005,8 +1229,8 @@ server <- function(input, output, session) {
       hoverinfo = "text",
       text = ~value,
       textposition = "none",
-      height = 200,
-      width = 250
+      height = 210,
+      width = 300
     ) %>% layout(
       title = list(
         text = paste0("Order counts by month (", format(Sys.Date(), "%Y"), ")"),
@@ -1099,7 +1323,8 @@ server <- function(input, output, session) {
       theme_minimal() +
       theme(
         plot.title = element_text(size = 16, face = "bold"),
-        axis.title = element_text(size = 13),
+        axis.title.x = element_text(size = 13),
+        axis.title.y = element_blank(),
         axis.text.x = element_text(size = 12),
         axis.text.y = element_text(size = 12, face = "bold"),
         panel.grid.minor.x = element_blank(),
@@ -1230,7 +1455,8 @@ server <- function(input, output, session) {
   })
   
   # Reset filters when button is clicked
-  observeEvent(input$resetFilters, {
+  observeEvent(input$resetDateFilters, {
+    updateDateRangeInput(session, "dateRange", start = "2020-01-01", end = Sys.Date())
   })
   
   # Reset filters when data type, value type or bins are changed
