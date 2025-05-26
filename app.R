@@ -971,16 +971,16 @@ server <- function(input, output, session) {
   
   # Total value this month
   output$totalValueThisMonth <- renderText({
-    dataset <- data()$Orders
+    dataset <- raw_data$orders
     
     # Filter for the current month
     current_month <- format(Sys.Date(), "%Y-%m")
     filtered_data <- dataset %>%
-      mutate(month = format(as.Date(`Created at`), "%Y-%m")) %>%
+      mutate(month = format(as.Date(created_at), "%Y-%m")) %>%
       filter(month == current_month)
     
     # Calculate total value
-    total_value <- sum(filtered_data$"Total value", na.rm = TRUE)
+    total_value <- sum(filtered_data$total, na.rm = TRUE)
     
     # Format as currency
     formatted_value <- format(total_value, big.mark = ",", scientific = FALSE)
